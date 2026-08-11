@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Winning Meme Coin Generator</title>
+<meta name="description" content="One button. Scans every free Solana market feed and picks the coin with the best odds of a 5x–100x day." />
+<link rel="stylesheet" href="./styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>" />
+</head>
+<body>
+<main class="wrap">
+  <header class="head">
+    <h1>Winning Meme&nbsp;Coin Generator</h1>
+    <p class="sub">Scans every free Solana market feed — boosted tokens, new pools, trending pools — filters the rugs, and ranks what is left on 24-hour moonshot odds.</p>
+  </header>
+
+  <button id="generate" class="cta" type="button">
+    <span class="cta-label">Generate Winning Meme Coin</span>
+  </button>
+
+  <section id="log" class="log" hidden aria-live="polite"></section>
+
+  <section id="result" class="result" hidden></section>
+
+  <section id="runners" class="runners" hidden>
+    <h2>Runners-up</h2>
+    <div class="table-scroll">
+      <table id="runners-table">
+        <thead>
+          <tr><th>#</th><th>Coin</th><th>Score</th><th>Mkt cap</th><th>Liq</th><th>1h</th><th>24h</th><th>Age</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <p><strong>This is a gambling heuristic, not financial advice.</strong> Meme coins go to zero constantly — most of them do. The scan reads public market data and ranks it; it cannot see rug pulls, insider supply, or the future. Never put in money you cannot afford to lose entirely.</p>
+    <p class="tiny">Data: DexScreener · GeckoTerminal · Jupiter — all free, no API keys, fetched live in your browser.</p>
+  </footer>
+</main>
+<script type="module" src="./src/app.js"></script>
+</body>
+</html>

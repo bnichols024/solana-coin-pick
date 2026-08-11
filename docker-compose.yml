@@ -1,0 +1,8 @@
+services:
+  solana-coin-pick:
+    build: .
+    image: solana-coin-pick:latest
+    container_name: solana-coin-pick
+    restart: unless-stopped
+    ports:
+      - "8080:80"   # Unraid: browse to http://<tower-ip>:8080

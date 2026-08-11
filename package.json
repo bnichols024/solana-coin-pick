@@ -1,0 +1,14 @@
+{
+  "name": "solana-coin-pick",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-button Solana meme coin picker — scores free market feeds for 24h moonshot odds.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "start": "python3 -m http.server 8080",
+    "docker:build": "docker build -t solana-coin-pick .",
+    "docker:run": "docker run --rm -p 8080:80 solana-coin-pick"
+  },
+  "license": "MIT"
+}
