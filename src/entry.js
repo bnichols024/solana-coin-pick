@@ -44,7 +44,10 @@ export function assessEntry(c) {
   const legLow = priors.length ? Math.min(...priors, mcNow) : mcNow;
   const leg = Math.max(mcNow - legLow, 0);
 
-  const level = (ratio) => (leg > 0 ? mcNow - ratio * leg : null);
+  // When both prior caps are unreconstructable (a -99%+ window makes the ratio
+  // meaningless) there is no leg to retrace, so fall back to a flat discount
+  // rather than emitting a null level into the UI.
+  const level = (ratio) => (leg > 0 ? mcNow - ratio * leg : mcNow * (1 - ratio * 0.5));
 
   const parabolic = c.chg5m >= 8 || c.chg1h >= 60;
   const stretched = c.chg1h >= 30 && c.chg1h > c.chg6h;   // the whole 6h move happened this hour

@@ -18,9 +18,16 @@ export function logScale(v, lo, hi) {
   return clamp01((a - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)));
 }
 
+// Note: the global isFinite() coerces, so isFinite(true) and isFinite([]) are
+// both true and a naive guard would let a boolean through as a "number" that
+// later explodes on .toFixed(). Only real numbers and numeric strings pass.
 const num = (v) => {
-  const n = typeof v === 'string' ? parseFloat(v) : v;
-  return isFinite(n) ? n : null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string') {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 };
 
 /**
