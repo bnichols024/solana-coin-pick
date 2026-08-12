@@ -62,7 +62,9 @@ function applyPreset(name) {
     el.classList.toggle('is-active', on);
     el.setAttribute('aria-checked', String(on));
   }
-  $('preset-blurb').textContent = activePreset.blurb;
+  const blurb = $('preset-blurb');
+  blurb.textContent = activePreset.blurb;
+  blurb.classList.toggle('is-danger', activePreset.danger);
   try { globalThis.localStorage?.setItem(PRESET_KEY, activePreset.name); } catch { /* fine */ }
 }
 

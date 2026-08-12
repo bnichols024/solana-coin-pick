@@ -93,3 +93,26 @@ export const deadPool = {
     h24: { buys: 60, sells: 70 },
   },
 };
+
+/** A believable Gamble-tier launch: tiny cap, thin pool, hours old. */
+export const microLaunch = {
+  chainId: 'solana',
+  dexId: 'raydium',
+  url: 'https://dexscreener.com/solana/micro',
+  pairAddress: 'PAIRMICRO',
+  baseToken: { address: 'MicroTokenAddress999999999999999999999999999', name: 'Micro Frog', symbol: 'MICROFROG' },
+  priceUsd: '0.000031',
+  priceChange: { m5: 6, h1: 40, h6: 80, h24: 150 },
+  volume: { m5: 3_000, h1: 18_000, h6: 45_000, h24: 60_000 },
+  txns: {
+    m5: { buys: 14, sells: 6 },
+    h1: { buys: 90, sells: 40 },
+    h6: { buys: 260, sells: 140 },
+    h24: { buys: 380, sells: 210 },
+  },
+  liquidity: { usd: 9_000 },
+  fdv: 32_000,
+  marketCap: 32_000,
+  pairCreatedAt: hoursAgo(5),
+  info: { socials: [{ type: 'twitter' }] },
+};

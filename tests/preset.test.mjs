@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { PRESETS, resolvePreset, CONFIG } from '../src/config.js';
-import { normalizePair, rankCandidates } from '../src/score.js';
+import { normalizePair, rankCandidates, scale, logScale } from '../src/score.js';
 import * as fx from './fixtures.js';
 
 const norm = (pair) => normalizePair(pair, {}, fx.NOW);
@@ -75,4 +75,82 @@ test('headroom rescales with the preset cap ceiling', () => {
   const balanced = rankCandidates([coin], resolvePreset('balanced')).scored[0];
   // $2M is near degen's $4M ceiling but tiny against balanced's $30M one.
   assert.ok(degen.parts.headroom.raw < balanced.parts.headroom.raw);
+});
+
+// --- Gamble tier -----------------------------------------------------------
+
+test('gamble caps market cap at $50K and accepts far thinner pools', () => {
+  const g = resolvePreset('gamble').filters;
+  const d = resolvePreset('degen').filters;
+  assert.equal(g.maxFdvUsd, 50_000, 'the whole point of the tier');
+  assert.ok(g.minLiquidityUsd < d.minLiquidityUsd);
+  assert.ok(g.minVolume24hUsd < d.minVolume24hUsd);
+  assert.ok(g.minTxns24h < d.minTxns24h);
+  assert.ok(g.maxPairAgeDays < d.maxPairAgeDays, 'brand new only');
+  assert.equal(resolvePreset('gamble').danger, true);
+  assert.equal(resolvePreset('degen').danger, false);
+});
+
+test('a sub-$50K launch passes gamble and fails every other preset', () => {
+  const micro = norm(fx.microLaunch);
+  assert.equal(rankCandidates([micro], resolvePreset('gamble')).scored.length, 1, 'gamble must accept it');
+  for (const name of ['safe', 'balanced', 'degen']) {
+    const { scored, rejected } = rankCandidates([micro], resolvePreset(name));
+    assert.equal(scored.length, 0, `${name} should reject a $32K coin`);
+    assert.ok(rejected[0].reasons.length > 0);
+  }
+});
+
+test('gamble still rejects anything above its ceiling', () => {
+  const tooBig = norm({ ...fx.microLaunch, fdv: 500_000, marketCap: 500_000 });
+  const { scored, rejected } = rankCandidates([tooBig], resolvePreset('gamble'));
+  assert.equal(scored.length, 0);
+  assert.ok(rejected[0].reasons.some((r) => /market cap too large/.test(r)));
+});
+
+test('gamble keeps every safety filter — cheap does not mean unchecked', () => {
+  const honeypot = norm({
+    ...fx.microLaunch,
+    txns: { ...fx.microLaunch.txns, h24: { buys: 400, sells: 0 } },
+  });
+  const impersonator = norm({ ...fx.microLaunch, baseToken: { ...fx.microLaunch.baseToken, symbol: 'BONK' } });
+  const g = resolvePreset('gamble');
+  assert.ok(rankCandidates([honeypot], g).rejected[0].reasons.some((r) => /honeypot/.test(r)));
+  assert.ok(rankCandidates([impersonator], g).rejected[0].reasons.some((r) => /impersonator/.test(r)));
+});
+
+test('headroom discriminates inside the gamble tier', () => {
+  // With a fixed $50K floor against a $50K ceiling the scale collapsed and
+  // every gamble coin scored an identical, meaningless 1.
+  const g = resolvePreset('gamble');
+  const tiny = rankCandidates([norm({ ...fx.microLaunch, fdv: 4_000, marketCap: 4_000 })], g).scored[0];
+  const nearCap = rankCandidates([norm({ ...fx.microLaunch, fdv: 46_000, marketCap: 46_000 })], g).scored[0];
+  assert.ok(tiny && nearCap, 'both should pass the filters');
+  assert.ok(tiny.parts.headroom.raw > nearCap.parts.headroom.raw + 0.2,
+    `a $4K coin must have clearly more headroom than a $46K one (${tiny.parts.headroom.raw} vs ${nearCap.parts.headroom.raw})`);
+  assert.ok(nearCap.parts.headroom.raw < 0.2, 'a coin at the ceiling has almost none');
+});
+
+test('gamble freshness peaks earlier than the wider presets', () => {
+  const g = resolvePreset('gamble');
+  // A 3-day window puts the sweet spot at 0-36h, then decays to 72h.
+  const at12h = rankCandidates([norm({ ...fx.microLaunch, pairCreatedAt: fx.NOW - 12 * 3600e3 })], g).scored[0];
+  const at50h = rankCandidates([norm({ ...fx.microLaunch, pairCreatedAt: fx.NOW - 50 * 3600e3 })], g).scored[0];
+  assert.equal(at12h.parts.freshness.raw, 1, '12h is inside the sweet spot');
+  assert.ok(at50h.parts.freshness.raw < 1, '50h is past it and should decay');
+  // The wider presets treat both as equally fresh, which is the difference.
+  const balanced = resolvePreset('balanced');
+  assert.equal(rankCandidates([norm({ ...fx.goodRunner, pairCreatedAt: fx.NOW - 50 * 3600e3 })], balanced).scored[0].parts.freshness.raw, 1);
+});
+
+test('scale and logScale survive a degenerate range instead of going constant', () => {
+  // This is what silently killed headroom at a $50K ceiling.
+  assert.equal(scale(80, 72, 72), 1);
+  assert.equal(scale(60, 72, 72), 0);
+  assert.equal(logScale(60_000, 50_000, 50_000), 1);
+  assert.equal(logScale(10_000, 50_000, 50_000), 0);
+  // An inverted range has no meaningful answer; it must still be a finite
+  // step rather than a NaN that silently clamps the whole signal to zero.
+  assert.equal(scale(5, 10, 5), 1);
+  assert.ok(Number.isFinite(scale(5, 10, 5)));
 });

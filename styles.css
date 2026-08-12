@@ -54,9 +54,19 @@ h1 {
   color: #12081f; background: linear-gradient(96deg, var(--gold), #ff9d4d);
   border-color: transparent;
 }
+.preset-danger.is-active {
+  color: #fff; background: linear-gradient(96deg, #d13b3b, #ff5c5c);
+}
+.preset-blurb.is-danger { color: var(--red); }
+
 .preset-blurb {
   text-align: center; color: var(--muted); font-size: 12.5px;
   margin: 0 0 16px; min-height: 1.2em;
+}
+
+@media (max-width: 520px) {
+  /* Four buttons on a phone give up padding to stay on one row. */
+  .preset { padding: 8px 4px; font-size: 12px; }
 }
 
 .cta {

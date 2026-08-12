@@ -124,9 +124,18 @@ Three profiles above the button, remembered between visits:
 | **Cautious** | $60K+ liquidity, cap ceiling $15M, 600+ trades, 3h+ old; weights favour buy pressure and staying power |
 | **Balanced** | The shipped defaults |
 | **Degen** | $15K+ liquidity, cap ceiling $4M, 200+ trades, 1h+ old; weights favour momentum and headroom |
+| **Gamble** | Cap ceiling **$50K**, $3K+ liquidity, 50+ trades, 20min–3 days old. Brand-new lottery tickets — expect most to go to zero |
 
-The contract rug checks are identical in all three — appetite changes which coins are
-considered, never whether they are vetted.
+**Gamble** is an order of magnitude below the others on every floor, because a $50K coin
+cannot clear thresholds written for a $1M one. Two scoring signals had to be reworked to
+support it: headroom scaled from a fixed $50K floor, which collapsed to a constant
+against a $50K ceiling, and freshness assumed a 72-hour sweet spot, which called an
+entire 3-day window equally fresh. Both now scale to the active ceiling.
+
+The contract rug checks are identical in all four — appetite changes which coins are
+considered, never whether they are vetted. Gamble picks still get mint authority, freeze
+authority, LP lock, honeypot and impersonation checks. Expect more "partial" safety
+results down there, though: RugCheck often has no report for a coin this new.
 
 ## Track record
 
@@ -161,7 +170,7 @@ actually calls. A test asserts the policy stays in sync with the code.
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # 124 tests
+npm test           # 131 tests
 ```
 
 **Docker / Unraid**
@@ -187,7 +196,7 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ## Testing
 
-124 tests, run on every push before deploy:
+131 tests, run on every push before deploy:
 
 ```bash
 npm test
@@ -255,6 +264,6 @@ src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            124 tests: unit, network, property/fuzz, packaging, sanitiser
+tests/            131 tests: unit, network, property/fuzz, packaging, sanitiser
 Dockerfile        nginx:alpine static image
 ```

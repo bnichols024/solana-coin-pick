@@ -8,12 +8,16 @@ const clamp01 = (n) => (isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 /** Linear 0..1 scale of `v` between `lo` and `hi`. */
 export function scale(v, lo, hi) {
   if (!isFinite(v)) return 0;
+  // A degenerate range would divide by zero and clamp to 0, silently turning
+  // the signal into a constant. Treat it as a step instead.
+  if (hi <= lo) return v >= hi ? 1 : 0;
   return clamp01((v - lo) / (hi - lo));
 }
 
 /** Logarithmic 0..1 scale — for quantities that span orders of magnitude. */
 export function logScale(v, lo, hi) {
   if (!isFinite(v) || v <= 0) return 0;
+  if (hi <= lo) return v >= hi ? 1 : 0;
   const a = Math.log10(Math.max(v, lo));
   return clamp01((a - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)));
 }
@@ -114,12 +118,15 @@ export function rejectReasons(c, f = CONFIG.filters) {
 
   if (!c.address) out.push('no token address');
   if (!(c.priceUsd > 0)) out.push('no price');
+  // Size first: for an oversized coin "market cap too large" is a far more
+  // useful headline than whatever else it also trips, and the audit panel
+  // groups rejections by the first reason listed.
+  if (c.fdv > f.maxFdvUsd) out.push('market cap too large for this profile');
+  if (!(c.fdv > 0)) out.push('no market cap data');
   if (c.liquidity < f.minLiquidityUsd) out.push(`liquidity under $${f.minLiquidityUsd / 1000}K`);
   if (c.liquidity > f.maxLiquidityUsd) out.push('liquidity too deep to move fast');
   if (c.vol24 < f.minVolume24hUsd) out.push('24h volume too thin');
   if (c.liquidity > 0 && c.vol24 / c.liquidity < f.minVolumeToLiquidity) out.push('pool barely turning over');
-  if (c.fdv > f.maxFdvUsd) out.push('market cap too large for a 10x day');
-  if (!(c.fdv > 0)) out.push('no market cap data');
   if (ageMin == null) out.push('unknown pair age');
   else if (ageMin < f.minPairAgeMinutes) out.push('too new — sniper/rug window');
   else if (ageMin > f.maxPairAgeDays * 1440) out.push('no longer a fresh launch');
@@ -186,17 +193,24 @@ export function attentionScore(c) {
 }
 
 export function headroomScore(c, filters = CONFIG.filters) {
-  // Smaller FDV = more room. $50K is maximum headroom, the cap ceiling is none.
-  // Tracks the active filter ceiling so a preset that lowers it re-scales too.
-  return clamp01(1 - logScale(c.fdv, 50_000, filters.maxFdvUsd));
+  // Smaller FDV = more room; the active cap ceiling is none. The floor sits a
+  // long way under the ceiling so the scale never collapses — with a $50K
+  // ceiling a fixed $50K floor would score every coin identically.
+  const floor = Math.min(50_000, filters.maxFdvUsd / 20);
+  return clamp01(1 - logScale(c.fdv, floor, filters.maxFdvUsd));
 }
 
 export function freshnessScore(c, filters = CONFIG.filters) {
   if (c.ageMs == null) return 0;
+  const maxHours = filters.maxPairAgeDays * 24;
+  // The sweet spot ends halfway through the allowed window, capped at 72h, so
+  // a preset hunting fresh launches peaks earlier instead of calling its whole
+  // range equally fresh.
+  const sweetEnd = Math.min(72, maxHours / 2);
   const h = c.ageMs / 3_600_000;
-  if (h < 2) return scale(h, 0.75, 2);                        // ramping in
-  if (h <= 72) return 1;                                      // sweet spot
-  return clamp01(1 - scale(h, 72, filters.maxPairAgeDays * 24)); // decaying out
+  if (h < 2) return scale(h, 0.75, 2);                 // ramping in
+  if (h <= sweetEnd) return 1;                         // sweet spot
+  return clamp01(1 - scale(h, sweetEnd, maxHours));    // decaying out
 }
 
 const SIGNALS = {

@@ -83,7 +83,7 @@ export const PRESETS = {
   },
   degen: {
     label: 'Degen',
-    blurb: 'Micro caps and fresh launches. Highest ceiling, highest chance of zero.',
+    blurb: 'Micro caps and fresh launches. High ceiling, high chance of zero.',
     filters: {
       minLiquidityUsd: 15_000,
       maxFdvUsd: 4_000_000,
@@ -92,6 +92,29 @@ export const PRESETS = {
       minPairAgeMinutes: 60,
     },
     weights: { momentum: 0.30, buyPressure: 0.18, velocity: 0.17, attention: 0.10, headroom: 0.20, freshness: 0.05 },
+  },
+  gamble: {
+    label: 'Gamble',
+    blurb: 'Brand-new sub-$50K launches. Lottery tickets — expect most of these to go to zero.',
+    danger: true,
+    filters: {
+      // Everything here is an order of magnitude below the other presets,
+      // because a $50K coin cannot clear floors written for a $1M one.
+      maxFdvUsd: 50_000,
+      maxLiquidityUsd: 150_000,  // more liquidity than cap is a data anomaly
+      minLiquidityUsd: 3_000,    // under this you cannot get out at any price
+      minVolume24hUsd: 8_000,
+      minVolumeToLiquidity: 0.5,
+      minTxns24h: 50,
+      minPairAgeMinutes: 20,     // still past the instant-rug window
+      maxPairAgeDays: 3,         // brand new only
+      minAvgTradeUsd: 1,
+      maxAvgTradeUsd: 3_000,     // at this size a $3K trade is one whale
+      corpseLiquidityUsd: 25_000,
+    },
+    // Attention barely exists down here — nobody buys promotion for a $30K
+    // coin — so that weight moves to momentum, headroom and freshness.
+    weights: { momentum: 0.28, buyPressure: 0.20, velocity: 0.15, attention: 0.05, headroom: 0.17, freshness: 0.15 },
   },
 };
 
@@ -102,6 +125,7 @@ export function resolvePreset(name) {
     name: PRESETS[name] ? name : 'balanced',
     label: preset.label,
     blurb: preset.blurb,
+    danger: !!preset.danger,
     filters: { ...CONFIG.filters, ...preset.filters },
     weights: Object.keys(preset.weights).length ? preset.weights : CONFIG.weights,
   };
