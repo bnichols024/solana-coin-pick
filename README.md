@@ -135,6 +135,11 @@ against live data whenever you open the page: median result, best, how many went
 1.5x+, and how many lost 75%+. Nothing leaves the device and nothing is cleaned up to
 look good — if the picks are bad, the table says so. There is a Clear button.
 
+The table also records what the app *advised* at pick time. Results are measured from
+the market cap when the coin was picked, so a row where the verdict was **Wait** or
+**Small dip** understates the outcome — the recommended entry was below that. The
+footnote says so rather than quietly taking the credit.
+
 ---
 
 ## Security

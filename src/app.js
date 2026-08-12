@@ -519,6 +519,7 @@ async function renderHistory({ refresh = true } = {}) {
     <tr>
       <td><a href="https://dexscreener.com/solana/${encodeURIComponent(r.address)}" target="_blank" rel="noopener noreferrer">$${esc(r.symbol)}</a></td>
       <td>${r.ageMs < 60_000 ? 'just now' : `${age(r.ageMs)} ago`}</td>
+      <td class="${r.entryState === 'buy_now' ? '' : 'warn-cell'}">${esc(entryLabel(r.entryState))}</td>
       <td>${usd(r.pickedMc)}</td>
       <td>${r.nowMc != null ? usd(r.nowMc) : '—'}</td>
       <td>${resultText(r)}</td>
