@@ -64,6 +64,18 @@
     </div>
   </section>
 
+  <details id="autopsy" class="autopsy">
+    <summary>Check a specific coin — why did (or didn't) it get picked?</summary>
+    <div class="autopsy-body">
+      <div class="autopsy-form">
+        <input id="autopsy-address" type="text" inputmode="text" autocomplete="off"
+               spellcheck="false" placeholder="Paste a Solana contract address" aria-label="Contract address" />
+        <button id="autopsy-run" class="copy" type="button">Check</button>
+      </div>
+      <div id="autopsy-result" class="autopsy-result"></div>
+    </div>
+  </details>
+
   <details id="rejected" class="rejected" hidden>
     <summary><span id="rejected-count">0</span> candidates rejected — see why</summary>
     <div id="rejected-body" class="rejected-body"></div>

@@ -1,9 +1,9 @@
 // Orchestration + rendering. Fetch -> normalize -> filter -> score -> show.
 
-import { CONFIG, SCORE_LABELS, resolvePreset } from './config.js';
+import { CONFIG, PRESETS, SCORE_LABELS, resolvePreset } from './config.js';
 import { discoverCandidates, hydratePairs, fetchJupiterVerified, fetchCurrentMarketCaps, fetchPeakSince } from './sources.js';
 import { loadHistory, recordPick, gradeHistory, clearHistory, calibration, updatePeaks } from './history.js';
-import { normalizePair, rankCandidates } from './score.js';
+import { normalizePair, rankCandidates, rejectReasons, scoreCandidate } from './score.js';
 import { vetToken } from './safety.js';
 import { vetShortlist } from './select.js';
 import { assessEntry, entryLabel } from './entry.js';
@@ -489,6 +489,111 @@ function renderRejected(rejected, rejectedForSafety = []) {
   $('rejected-body').innerHTML = safetyRows.join('') + grouped.join('');
   el.hidden = false;
 }
+
+// --- address autopsy -------------------------------------------------------
+// "Why didn't you pick this one?" answered from the actual pipeline rather than
+// from my guesses: the same discovery, filters, scoring and vetting the scan
+// uses, run against one address you name.
+
+const autopsyEl = () => $('autopsy-result');
+
+async function runAutopsy() {
+  const raw = $('autopsy-address').value.trim();
+  const btnEl = $('autopsy-run');
+  if (!raw) { autopsyEl().innerHTML = '<p class="muted">Paste a contract address first.</p>'; return; }
+  // Solana addresses are base58, 32-44 chars. Reject obvious junk before
+  // spending seven API calls on it.
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw)) {
+    autopsyEl().innerHTML = '<p class="muted">That does not look like a Solana address (base58, 32–44 characters).</p>';
+    return;
+  }
+
+  btnEl.disabled = true;
+  autopsyEl().innerHTML = '<p class="muted">Checking every feed, filter and contract check…</p>';
+  try {
+    // The full pair, via the same hydration the scan uses.
+    const [pairs, discovery] = await Promise.all([
+      hydratePairs([raw]),
+      discoverCandidates().catch(() => ({ seeds: new Map() })),
+    ]);
+    const pair = pairs.get(raw);
+
+    if (!pair) {
+      autopsyEl().innerHTML = `<div class="autopsy-report">
+        <p class="autopsy-verdict down">DexScreener returns no Solana pair for this address.</p>
+        <p class="muted">Nothing downstream can see it either — no price, no liquidity, no filters, no score.
+        For a brand-new pump.fun token this usually means it has not graduated to a real
+        AMM pool yet, which is a <strong>discovery</strong> gap, not a scoring one.</p>
+      </div>`;
+      return;
+    }
+
+    const c = normalizePair(pair, { sources: discovery.seeds.get(raw)?.sources || [] });
+    const feeds = discovery.seeds.get(raw)?.sources || [];
+
+    // Peak since the pair was created, from the same OHLCV helper the track
+    // record uses.
+    let peakLine = '';
+    if (pair.pairAddress && pair.pairCreatedAt) {
+      const { peak, reason } = await fetchPeakSince(pair.pairAddress, pair.pairCreatedAt);
+      const mult = peak > 0 && c.priceUsd > 0 ? peak / c.priceUsd : null;
+      peakLine = mult
+        ? `<div class="autopsy-row"><span>Peak since launch</span><strong>${(mult).toFixed(2)}x above where it is now</strong></div>`
+        : `<div class="autopsy-row"><span>Peak since launch</span><span class="muted">${esc(reason || 'unavailable')}</span></div>`;
+    }
+
+    const safety = await vetToken(raw).catch(() => null);
+
+    const presetRows = Object.keys(PRESETS).map((name) => {
+      const preset = resolvePreset(name);
+      const reasons = rejectReasons(c, preset.filters);
+      if (reasons.length) {
+        return `<div class="autopsy-preset">
+          <strong>${esc(preset.label)}</strong>
+          <span class="down">rejected</span>
+          <span class="autopsy-why">${esc(reasons.join(' · '))}</span>
+        </div>`;
+      }
+      const s = scoreCandidate(c, preset.weights, preset.filters);
+      const parts = Object.entries(s.parts)
+        .map(([k, v]) => `${SCORE_LABELS[k] || k} ${(v.raw * 100).toFixed(0)}`).join(' · ');
+      return `<div class="autopsy-preset">
+        <strong>${esc(preset.label)}</strong>
+        <span class="up">passes · score ${s.score}</span>
+        <span class="autopsy-why">${esc(parts)}</span>
+      </div>`;
+    }).join('');
+
+    const entry = assessEntry(c);
+    autopsyEl().innerHTML = `<div class="autopsy-report">
+      <div class="autopsy-head">$${esc(c.symbol)} — ${esc(c.name)}</div>
+      <div class="autopsy-row"><span>Market cap</span><strong>${usd(c.fdv)}</strong></div>
+      <div class="autopsy-row"><span>Liquidity</span><strong>${usd(c.liquidity)}</strong></div>
+      <div class="autopsy-row"><span>Pair age</span><strong>${age(c.ageMs)}</strong></div>
+      <div class="autopsy-row"><span>5m / 1h / 6h / 24h</span><strong>${pct(c.chg5m)} · ${pct(c.chg1h)} · ${pct(c.chg6h)} · ${pct(c.chg24h)}</strong></div>
+      ${peakLine}
+      <div class="autopsy-row"><span>Listed right now by</span><strong>${
+        feeds.length ? esc(feeds.join(', ')) : '<span class="down">no feed we scan</span>'}</strong></div>
+      <h3 class="section">Per preset</h3>
+      ${presetRows}
+      <h3 class="section">Contract checks</h3>
+      ${safety ? renderSafety(safety) : '<p class="muted">Contract checks unavailable.</p>'}
+      <h3 class="section">Entry verdict</h3>
+      <p>${esc(entry.verdict)} — ${esc(entry.reason)}</p>
+      ${feeds.length ? '' : `<p class="autopsy-note">No feed currently lists it, so the scan would never have
+        seen this coin regardless of how it scores. That is a discovery problem, not a
+        scoring one — note that feeds change constantly, so this reflects right now, not
+        the moment it launched.</p>`}
+    </div>`;
+  } catch (err) {
+    autopsyEl().innerHTML = `<p class="down">Check failed: ${esc(err?.message || 'unknown error')}</p>`;
+  } finally {
+    btnEl.disabled = false;
+  }
+}
+
+$('autopsy-run').addEventListener('click', runAutopsy);
+$('autopsy-address').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAutopsy(); });
 
 // --- track record ----------------------------------------------------------
 

@@ -6,7 +6,7 @@ export const CONFIG = {
   // Bumped whenever the scoring model changes in a way that should be judged
   // separately. Every pick is stamped with it, so a new model's results are
   // never averaged in with the old one's. Rows with no stamp are v1.
-  modelVersion: 2,
+  modelVersion: 3,
 
   // --- hard filters -------------------------------------------------------
   filters: {

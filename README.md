@@ -54,6 +54,20 @@ wildly lopsided buy/sell ratio (sell tax), or a pool already down 60%+ on thin l
 | Upside headroom | 22% | Log-inverse FDV — small cap, room to run |
 | Freshness | 15% | Sweet spot runs to 72h, or halfway through a preset's shorter age window |
 
+### Model v3 — "late" depends on age
+
+v2 could not tell a 25-minute-old coin from a three-day-old one. Both, up 200%, scored
+momentum `0.150`, because the lateness penalty read the price windows without knowing how
+long the coin had existed. For a three-day-old coin +200% means the entry has passed; for
+one 25 minutes old that 200% *is its whole life* and there was no earlier entry to miss.
+The Gamble tier — which exists to catch exactly these — was ranking a parabolic launch 23
+points below a sedate one.
+
+Lateness now blends by maturity (0 at launch, 1 by six hours). A mature coin is late when
+it is extended; a young one is late only when the move is **rolling over** — the last five
+minutes dropping below the hourly pace. A young launch still ripping scores 0.94, the same
+launch fading scores 0.26, and every mature case is unchanged from v2.
+
 ### Model v2 — why these weights
 
 v1 lost money: 16 picks, median −36%. The Peak column diagnosed it. Peaks since pick were
@@ -131,6 +145,14 @@ The card **refreshes itself every 45 seconds** — market cap and the price-chan
 move together, so the entry levels stay derived from current data rather than from
 whenever you happened to click. It pauses on a hidden tab and keeps its last good values
 if a refresh fails.
+
+**Check a specific coin.** Paste any contract address into the autopsy panel and the app
+reports what it actually thinks: which feeds list it right now, its peak since launch, and
+for every preset either the exact filters it fails or its score and breakdown — plus
+contract checks and an entry verdict. This answers "why didn't you pick this one?" from
+the real pipeline rather than from guesswork, and distinguishes a **scoring** miss from a
+**discovery** one (a pump.fun token still on its bonding curve returns no pair at all, and
+no amount of tuning would have found it).
 
 Everything rejected is listed in an **expandable audit panel**, grouped by reason with
 the tickers, contract failures first. The filters are the most opinionated part of the
@@ -217,7 +239,7 @@ actually calls. A test asserts the policy stays in sync with the code.
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # 156 tests
+npm test           # 163 tests
 ```
 
 **Docker / Unraid**
@@ -243,7 +265,7 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ## Testing
 
-156 tests, run on every push before deploy:
+163 tests, run on every push before deploy:
 
 ```bash
 npm test
@@ -311,6 +333,6 @@ src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            156 tests: unit, network, property/fuzz, packaging, sanitiser
+tests/            163 tests: unit, network, property/fuzz, packaging, sanitiser
 Dockerfile        nginx:alpine static image
 ```

@@ -172,9 +172,20 @@ export function momentumScore(c) {
   const rising = scale(r1, 1, 15);        // moving, but not dramatically
   const accel = scale(r1 - r6, 0, 15);    // accelerating off its own base
 
-  // Late in two different ways: this hour is already vertical, or the run
-  // started hours ago and we are looking at the tail of it.
-  const lateness = Math.max(scale(r1, 25, 80), scale(c.chg24h, 100, 400));
+  // "Late" means something different depending on how much history a coin has.
+  // Judging both by the same yardstick scored a 25-minute-old launch up 200%
+  // exactly the same as a three-day-old coin up 200% — but the first one's
+  // 200% *is its whole life*, and there was no earlier entry to have missed.
+  const ageHours = c.ageMs == null ? 24 : c.ageMs / 3_600_000;
+  const maturity = clamp01(ageHours / 6);   // 0 at launch, 1 by six hours old
+
+  // Mature: a big move means the entry has already passed.
+  const extended = Math.max(scale(r1, 25, 80), scale(c.chg24h, 100, 400));
+  // Young: late only means the move is rolling over — the last five minutes
+  // have dropped below the hourly pace.
+  const fading = 1 - clamp01((c.chg5m * 12) / Math.max(r1, 1));
+
+  const lateness = maturity * extended + (1 - maturity) * fading;
 
   // Multiplicative, not additive: a flat coin must score ~0. Adding a
   // "not late" term would hand every dead coin most of the points.

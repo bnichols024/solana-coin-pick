@@ -23,6 +23,7 @@ globalThis.localStorage = new FakeStorage();
 
 const { cacheGet, cacheSet, cached, cacheClear, pruneExpired } = await import('../src/cache.js');
 const { loadHistory, recordPick, gradeHistory, clearHistory } = await import('../src/history.js');
+const { CONFIG } = await import('../src/config.js');
 
 const T0 = 1_760_000_000_000;
 
@@ -159,8 +160,9 @@ test('loadHistory ignores corrupt storage instead of throwing', () => {
 const { calibration } = await import('../src/history.js');
 
 // Stamped with the current model version: calibration deliberately judges only
-// the current model's picks, so unstamped rows would count as v1 and be excluded.
-const graded = (score, multiple, modelVersion = 2) =>
+// the current model's picks, so unstamped rows count as v1 and are excluded.
+// Read from CONFIG so bumping the model does not break every band test.
+const graded = (score, multiple, modelVersion = CONFIG.modelVersion) =>
   ({ score, multiple, modelVersion, address: `a${score}${multiple}${modelVersion}` });
 
 test('calibration stays hidden until there is enough data to mean anything', () => {
@@ -346,7 +348,7 @@ test('updatePeaks with nothing to record touches nothing', () => {
 test('a pick is stamped with the current model version', () => {
   clearHistory();
   recordPick(coin(), 80, 'buy_now', T0);
-  assert.equal(loadHistory()[0].modelVersion, 2);
+  assert.equal(loadHistory()[0].modelVersion, CONFIG.modelVersion);
 });
 
 test('picks from an older model keep their own stamp', () => {
@@ -358,25 +360,26 @@ test('picks from an older model keep their own stamp', () => {
 test('calibration segments by version and never mixes their medians', () => {
   const rows = [
     ...Array.from({ length: 16 }, (_, i) => ({ score: 70, multiple: 0.36, peakMultiple: 1.2, address: `v1-${i}` })),
-    ...Array.from({ length: 10 }, (_, i) => ({ score: 70, multiple: 1.4, peakMultiple: 2.1, modelVersion: 2, address: `v2-${i}` })),
+    ...Array.from({ length: 10 }, (_, i) => ({ score: 70, multiple: 1.4, peakMultiple: 2.1, modelVersion: CONFIG.modelVersion, address: `cur-${i}` })),
   ];
   const cal = calibration(rows);
   const byVersion = Object.fromEntries(cal.versions.map((v) => [v.version, v]));
   assert.equal(byVersion[1].n, 16, 'unstamped rows count as v1');
   assert.equal(byVersion[1].median, 0.36);
-  assert.equal(byVersion[2].n, 10);
-  assert.equal(byVersion[2].median, 1.4);
-  assert.equal(byVersion[2].current, true);
+  const cur = byVersion[CONFIG.modelVersion];
+  assert.equal(cur.n, 10);
+  assert.equal(cur.median, 1.4);
+  assert.equal(cur.current, true);
   assert.equal(byVersion[1].current, false);
-  assert.equal(byVersion[2].medianPeak, 2.1, 'peak is tracked per version too');
+  assert.equal(cur.medianPeak, 2.1, 'peak is tracked per version too');
 });
 
 test('the verdict judges the current model only, not the old one it replaced', () => {
   // v1 lost 64%; v2 is winning. The panel must not keep reporting v1's losses.
   const rows = [
     ...Array.from({ length: 20 }, (_, i) => ({ score: 70, multiple: 0.36, address: `v1-${i}` })),
-    ...Array.from({ length: 5 }, (_, i) => ({ score: 80, multiple: 2.0, modelVersion: 2, address: `v2a-${i}` })),
-    ...Array.from({ length: 5 }, (_, i) => ({ score: 50, multiple: 1.2, modelVersion: 2, address: `v2b-${i}` })),
+    ...Array.from({ length: 5 }, (_, i) => ({ score: 80, multiple: 2.0, modelVersion: CONFIG.modelVersion, address: `cura-${i}` })),
+    ...Array.from({ length: 5 }, (_, i) => ({ score: 50, multiple: 1.2, modelVersion: CONFIG.modelVersion, address: `curb-${i}` })),
   ];
   const cal = calibration(rows);
   assert.ok(!/losing money/.test(cal.verdict), `v1's losses must not condemn v2: "${cal.verdict}"`);
@@ -386,7 +389,7 @@ test('the verdict judges the current model only, not the old one it replaced', (
 test('a new model waits for its own sample before its bands mean anything', () => {
   const rows = [
     ...Array.from({ length: 30 }, (_, i) => ({ score: 70, multiple: 0.4, address: `v1-${i}` })),
-    { score: 70, multiple: 1.1, modelVersion: 2, address: 'v2-0' },
+    { score: 70, multiple: 1.1, modelVersion: CONFIG.modelVersion, address: 'cur-0' },
   ];
   const cal = calibration(rows);
   assert.equal(cal.ready, false, 'one v2 pick is not a sample');

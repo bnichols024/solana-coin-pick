@@ -381,3 +381,79 @@ test('a whole-model comparison: the early coin now beats the pumping one', () =>
   assert.equal(scored[0].candidate.symbol, starting.symbol);
   assert.ok(scored[0].score > scored[1].score);
 });
+
+// --- v3: "late" depends on how much history a coin has ---------------------
+// v2 scored a 25-minute-old coin up 200% identically to a three-day-old coin up
+// 200%, because lateness read the price windows without knowing the coin's age.
+// For the young one that 200% *is* its whole life — there was no earlier entry.
+
+const aged = (ageHours, chg) => norm({
+  ...fx.goodRunner,
+  pairCreatedAt: fx.NOW - ageHours * 3_600_000,
+  priceChange: chg,
+});
+
+test('a young parabolic launch is no longer treated as late', () => {
+  const young = aged(0.42, { m5: 14, h1: 90, h6: 220, h24: 220 });
+  assert.ok(momentumScore(young) > 0.8,
+    `a 25-minute-old coin still ripping should score high, got ${momentumScore(young).toFixed(3)}`);
+});
+
+test('but a young launch whose move is rolling over still is', () => {
+  // Same coin, same totals — only the last five minutes differ.
+  const ripping = aged(0.42, { m5: 14, h1: 90, h6: 220, h24: 220 });
+  const fading = aged(0.42, { m5: 1, h1: 90, h6: 220, h24: 220 });
+  assert.ok(momentumScore(fading) < momentumScore(ripping));
+  assert.ok(momentumScore(fading) < 0.4,
+    `a fading young coin must stay discounted, got ${momentumScore(fading).toFixed(3)}`);
+});
+
+test('the v2 discount on genuinely late mature coins does not regress', () => {
+  const mature = aged(72, { m5: 14, h1: 90, h6: 200, h24: 200 });
+  assert.ok(momentumScore(mature) < 0.2,
+    `three days old and up 200% is still late, got ${momentumScore(mature).toFixed(3)}`);
+  const maturedVertical = aged(72, { m5: 10, h1: 75, h6: 90, h24: 150 });
+  assert.ok(momentumScore(maturedVertical) < 0.35);
+});
+
+test('an unknown age is treated as mature, not as a free pass', () => {
+  // Missing pairCreatedAt must not become a loophole that scores every
+  // extended coin as if it were minutes old.
+  const noAge = norm({ ...fx.goodRunner, pairCreatedAt: undefined, priceChange: { m5: 14, h1: 90, h6: 220, h24: 220 } });
+  assert.equal(noAge.ageMs, null);
+  assert.ok(momentumScore(noAge) < 0.2);
+});
+
+test('a dead young coin still scores zero', () => {
+  assert.equal(momentumScore(aged(0.3, { m5: 0, h1: 0, h6: 0, h24: 0 })), 0);
+  assert.equal(momentumScore(aged(0.3, { m5: -3, h1: -10, h6: -10, h24: -10 })), 0);
+});
+
+test('maturity blends smoothly rather than snapping at a threshold', () => {
+  const chg = { m5: 14, h1: 90, h6: 220, h24: 220 };
+  const scores = [0.25, 1, 2, 4, 6, 12].map((h) => momentumScore(aged(h, chg)));
+  for (let i = 1; i < scores.length; i++) {
+    assert.ok(scores[i] <= scores[i - 1] + 1e-9,
+      `score should fall as the same coin gets older: ${JSON.stringify(scores.map((s) => +s.toFixed(3)))}`);
+  }
+  assert.ok(scores[0] - scores[scores.length - 1] > 0.5, 'and the spread should be meaningful');
+});
+
+test('the Gamble tier now ranks a live parabolic launch above a sedate one', () => {
+  // The defect that prompted v3: the lottery-ticket tier ranked the lottery
+  // ticket 23 points below the boring coin.
+  const mk = (chg) => norm({
+    chainId: 'solana', baseToken: { address: 'A', symbol: 'FROGGO', name: 'F' }, priceUsd: '0.00004',
+    priceChange: chg,
+    volume: { m5: 9000, h1: 40000, h6: 40000, h24: 40000 },
+    txns: { m5: { buys: 80, sells: 20 }, h1: { buys: 300, sells: 90 }, h6: { buys: 300, sells: 90 }, h24: { buys: 300, sells: 90 } },
+    liquidity: { usd: 14000 }, fdv: 38000, marketCap: 38000,
+    pairCreatedAt: fx.NOW - 25 * 60_000,
+  });
+  const parabolic = mk({ m5: 14, h1: 90, h6: 220, h24: 220 });
+  const sedate = mk({ m5: 3, h1: 22, h6: 30, h24: 30 });
+  const { scored } = rankCandidates([sedate, parabolic], resolvePreset('gamble'));
+  assert.equal(scored.length, 2);
+  assert.equal(scored[0].candidate.symbol, 'FROGGO');
+  assert.ok(scored[0].parts.momentum.raw > 0.8, 'the parabolic one should now lead on momentum');
+});
