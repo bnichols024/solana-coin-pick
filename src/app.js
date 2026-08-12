@@ -104,21 +104,16 @@ async function run() {
     // Deepest-boosted and most-corroborated seeds first, so the batch cap
     // spends its budget on the most promising addresses.
     //
-    // Except when the preset hunts brand-new launches: a coin twenty minutes
-    // old appears in exactly one feed (new pools) with no paid promotion, so
-    // the usual ranking buries it below the hydration cap and the tier would
-    // never see the very coins it exists to find. Freshly-listed pools go
-    // first in that case.
-    const prefersFresh = activePreset.filters.maxPairAgeDays <= 1;
-    const freshness = (seed) => (seed.sources.includes('gecko-new') ? 1 : 0);
+    // Newly listed pools go first for every preset, not just the fresh-hunting
+    // ones. Boosts and trending list a coin *because* it already pumped, so
+    // ranking by those put us permanently late; new pools are the only leading
+    // feed we have, and they were being cut by the hydration cap. Boost spend
+    // is now only a weak tiebreak — see attentionScore for why.
+    const isNewlyListed = (seed) => (seed.sources.includes('gecko-new') ? 1 : 0);
     const addresses = [...seeds.entries()]
-      .sort((a, b) => {
-        if (prefersFresh) {
-          const byFresh = freshness(b[1]) - freshness(a[1]);
-          if (byFresh) return byFresh;
-        }
-        return (b[1].sources.length - a[1].sources.length) || (b[1].boostAmount - a[1].boostAmount);
-      })
+      .sort((a, b) => (isNewlyListed(b[1]) - isNewlyListed(a[1]))
+        || (b[1].sources.length - a[1].sources.length)
+        || (b[1].boostAmount - a[1].boostAmount))
       .map(([addr]) => addr);
 
     const pairs = await hydratePairs(addresses, (m) => log(m, m.startsWith('⚠') ? 'warn' : ''));
@@ -182,6 +177,7 @@ async function run() {
     // Record it so the track record can grade this call later.
     try {
       recordPick(safeWinner.entry.candidate, safeWinner.entry.score, assessEntry(safeWinner.entry.candidate).state);
+      // (model version is stamped automatically from CONFIG.modelVersion)
       // Refresh so previously graded rows keep their grades — rendering from an
       // empty price map would blank them out.
       renderHistory().catch(() => {});
@@ -599,16 +595,36 @@ async function renderHistory({ refresh = true } = {}) {
 function renderCalibration(rows) {
   const el = $('calibration');
   const cal = calibration(rows);
-  if (!cal.ready) { el.hidden = true; return; }
+
+  // The version comparison is the whole point of stamping picks, so it shows
+  // as soon as there are two models to compare — before the bands are ready.
+  const versionLine = (cal.versions || []).length > 1
+    ? `<div class="cal-versions">${cal.versions.map((v) => `
+        <span class="cal-ver${v.current ? ' is-current' : ''}">
+          <strong>v${v.version}${v.current ? ' (current)' : ''}</strong>
+          ${v.n} pick${v.n === 1 ? '' : 's'} ·
+          median ${v.median != null ? `${v.median.toFixed(2)}x` : '—'} ·
+          peak ${v.medianPeak != null ? `${v.medianPeak.toFixed(2)}x` : '—'}
+        </span>`).join('')}</div>`
+    : '';
+
+  if (!cal.ready) {
+    if (!versionLine) { el.hidden = true; return; }
+    el.innerHTML = `<div class="cal-head">Model versions</div>${versionLine}`
+      + `<p class="cal-verdict">v${cal.currentVersion} needs ${cal.needed} more graded pick${cal.needed === 1 ? '' : 's'} before its score bands mean anything.</p>`;
+    el.hidden = false;
+    return;
+  }
 
   el.innerHTML = `
-    <div class="cal-head">Is the score predictive?</div>
+    <div class="cal-head">Is the score predictive? (v${esc(String(cal.currentVersion))} picks only)</div>
     <div class="cal-bands">${cal.buckets.map((b) => `
       <div class="cal-band">
         <span class="cal-label">Score ${esc(b.label)}</span>
         <span class="cal-median ${b.median >= 1 ? 'up' : 'down'}">${b.median != null ? `${b.median.toFixed(2)}x` : '—'}</span>
         <span class="cal-n">${b.n} pick${b.n === 1 ? '' : 's'}</span>
       </div>`).join('')}</div>
+    ${versionLine}
     <p class="cal-verdict">${esc(cal.verdict)}</p>`;
   el.hidden = false;
 }

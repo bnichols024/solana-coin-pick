@@ -156,15 +156,29 @@ export function rejectReasons(c, f = CONFIG.filters) {
 
 // --- individual signals, each returning 0..1 -------------------------------
 
+/**
+ * Early-move score: reward a coin that is *starting* to move, discount one that
+ * has already moved.
+ *
+ * The previous version rose monotonically with the 1h change, so the most
+ * vertical candle on the board always won. Measured against the live track
+ * record that was buying tops — every pick peaked under 1.6x and the median
+ * fell 36%. On meme coins a vertical hour is the exit signal, not the entry.
+ */
 export function momentumScore(c) {
-  // Convert every window to a %/hour rate so they are comparable.
-  const r5 = c.chg5m * 12;
   const r1 = c.chg1h;
-  const r6 = c.chg6h / 6;
-  const base = scale(r1, 0, 40);            // is it moving now
-  const accel = scale(r1 - r6, 0, 20);      // is the last hour beating the trend
-  const burst = scale(r5 - r1, -10, 15);    // is the last 5m beating the hour
-  return clamp01(0.45 * base + 0.35 * accel + 0.20 * burst);
+  const r6 = c.chg6h / 6;   // %/hour, so the windows are comparable
+
+  const rising = scale(r1, 1, 15);        // moving, but not dramatically
+  const accel = scale(r1 - r6, 0, 15);    // accelerating off its own base
+
+  // Late in two different ways: this hour is already vertical, or the run
+  // started hours ago and we are looking at the tail of it.
+  const lateness = Math.max(scale(r1, 25, 80), scale(c.chg24h, 100, 400));
+
+  // Multiplicative, not additive: a flat coin must score ~0. Adding a
+  // "not late" term would hand every dead coin most of the points.
+  return clamp01((0.55 * rising + 0.45 * accel) * (1 - 0.85 * lateness));
 }
 
 export function buyPressureScore(c) {
@@ -183,13 +197,21 @@ export function velocityScore(c) {
   return clamp01(0.65 * scale(hourly, 0.02, 0.5) + 0.35 * scale(recent, 0.02, 0.8));
 }
 
+/**
+ * Corroboration, not promotion.
+ *
+ * Boost spend used to be half this score, on the theory that money behind a
+ * coin is a good sign. It is at least as often money spent by someone trying to
+ * exit into new buyers, and the coins we bought on it peaked under 1.6x before
+ * dying. It is no longer scored — `boostAmount` is still carried and shown, so
+ * you can see who is paying for attention without the model paying for it too.
+ */
 export function attentionScore(c) {
-  const boost = logScale(c.boostAmount, 10, 1000);
-  const profile = c.hasProfile ? 0.25 : 0;
-  const socials = Math.min(c.socials, 3) / 3 * 0.15;
-  const verified = c.jupiterVerified ? 0.1 : 0;
-  const multiSource = Math.min(Math.max(c.sources.length - 1, 0), 2) / 2 * 0.15;
-  return clamp01(0.5 * boost + profile + socials + verified + multiSource);
+  const profile = c.hasProfile ? 0.35 : 0;
+  const socials = Math.min(c.socials, 3) / 3 * 0.2;
+  const verified = c.jupiterVerified ? 0.15 : 0;
+  const multiSource = Math.min(Math.max(c.sources.length - 1, 0), 2) / 2 * 0.3;
+  return clamp01(profile + socials + verified + multiSource);
 }
 
 export function headroomScore(c, filters = CONFIG.filters) {

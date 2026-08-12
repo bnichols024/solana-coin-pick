@@ -5,6 +5,8 @@
 // This is deliberately unflattering by design: if the picks are bad, the table
 // says so.
 
+import { CONFIG } from './config.js';
+
 const KEY = 'scp:history';
 const MAX_ENTRIES = 50;
 
@@ -48,7 +50,7 @@ function saveHistory(list) {
  * Record a pick. Re-picking the same coin inside the window updates nothing —
  * the original entry price is what we grade against.
  */
-export function recordPick(candidate, score, entryState, now = Date.now()) {
+export function recordPick(candidate, score, entryState, now = Date.now(), modelVersion = CONFIG.modelVersion) {
   if (!candidate?.address || !(candidate.fdv > 0)) return loadHistory();
   const list = loadHistory();
 
@@ -67,6 +69,7 @@ export function recordPick(candidate, score, entryState, now = Date.now()) {
     pairAddress: candidate.pairAddress || '',
     score,
     entryState,
+    modelVersion,
   });
   saveHistory(list);
   return list;
@@ -160,10 +163,42 @@ export function gradeHistory(history, current, now = Date.now(), peaks = new Map
  * This is the app marking its own homework in public. With a handful of picks
  * it means nothing, which is why it stays hidden until there are enough.
  */
-export function calibration(rows, minGraded = 8) {
-  const graded = rows.filter((r) => r.multiple != null);
+export function calibration(rows, minGraded = 8, currentVersion = CONFIG.modelVersion) {
+  const median = (nums) => {
+    if (!nums.length) return null;
+    const s = [...nums].sort((a, b) => a - b);
+    const mid = s.length / 2;
+    return s.length % 2 ? s[(s.length - 1) / 2] : (s[mid - 1] + s[mid]) / 2;
+  };
+  const versionOf = (r) => Number(r.modelVersion) || 1;
+
+  const allGraded = rows.filter((r) => r.multiple != null);
+
+  // Each scoring model is judged on its own picks. Averaging a new model in
+  // with an old one's losses hides whether the change did anything.
+  const versions = [...new Set(allGraded.map(versionOf))].sort((a, b) => b - a)
+    .map((v) => {
+      const picks = allGraded.filter((r) => versionOf(r) === v);
+      return {
+        version: v,
+        n: picks.length,
+        median: median(picks.map((r) => r.multiple)),
+        medianPeak: median(picks.map((r) => r.peakMultiple).filter((m) => m != null)),
+        current: v === currentVersion,
+      };
+    });
+
+  // Only the current model's picks drive the bands and the verdict.
+  const graded = allGraded.filter((r) => versionOf(r) === currentVersion);
   if (graded.length < minGraded) {
-    return { ready: false, needed: minGraded - graded.length, buckets: [], verdict: null };
+    return {
+      ready: false,
+      needed: minGraded - graded.length,
+      buckets: [],
+      verdict: null,
+      versions,
+      currentVersion,
+    };
   }
 
   const bands = [
@@ -171,13 +206,6 @@ export function calibration(rows, minGraded = 8) {
     { label: '55–70', min: 55, max: 70 },
     { label: 'under 55', min: -Infinity, max: 55 },
   ];
-
-  const median = (nums) => {
-    if (!nums.length) return null;
-    const s = [...nums].sort((a, b) => a - b);
-    const mid = s.length / 2;
-    return s.length % 2 ? s[(s.length - 1) / 2] : (s[mid - 1] + s[mid]) / 2;
-  };
 
   const buckets = bands.map((b) => {
     const inBand = graded.filter((r) => Number(r.score) >= b.min && Number(r.score) < b.max);
@@ -212,7 +240,7 @@ export function calibration(rows, minGraded = 8) {
     }
   }
 
-  return { ready: true, needed: 0, buckets, verdict, overall };
+  return { ready: true, needed: 0, buckets, verdict, overall, versions, currentVersion };
 }
 
 export function clearHistory() {

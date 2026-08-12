@@ -3,6 +3,11 @@
 // up the v2 signals in sources.js — no other change required.
 
 export const CONFIG = {
+  // Bumped whenever the scoring model changes in a way that should be judged
+  // separately. Every pick is stamped with it, so a new model's results are
+  // never averaged in with the old one's. Rows with no stamp are v1.
+  modelVersion: 2,
+
   // --- hard filters -------------------------------------------------------
   filters: {
     minLiquidityUsd: 20_000,      // below this you cannot exit your own position
@@ -31,13 +36,16 @@ export const CONFIG = {
   },
 
   // --- scoring weights (must sum to 1) ------------------------------------
+  // Shifted away from the two "already pumping" signals (momentum, velocity)
+  // toward headroom and buy pressure, after the v1 track record showed every
+  // pick peaking under 1.6x. Attention is nearly zeroed — see attentionScore.
   weights: {
-    momentum: 0.25,   // is the curve steepening right now
-    buyPressure: 0.20,
-    velocity: 0.15,   // 1h volume vs liquidity
-    attention: 0.15,  // someone is spending real money on promotion
-    headroom: 0.15,   // small FDV = room to run
-    freshness: 0.10,
+    momentum: 0.25,   // early move: starting, not finished
+    buyPressure: 0.25,
+    velocity: 0.10,   // 1h volume vs liquidity — also a lagging tell
+    attention: 0.03,  // corroboration only, no longer promotion spend
+    headroom: 0.22,   // small FDV = room to run
+    freshness: 0.15,
   },
 
   // --- fetch behaviour ----------------------------------------------------
@@ -45,7 +53,7 @@ export const CONFIG = {
     timeoutMs: 12_000,
     retries: 1,
     batchSize: 30,          // DexScreener allows 30 addresses per tokens call
-    maxBatches: 8,          // caps a click at ~240 hydrated tokens
+    maxBatches: 12,         // caps a click at ~360 hydrated tokens
     interBatchDelayMs: 120, // stay well inside the 300 req/min limit
   },
 
@@ -76,7 +84,7 @@ export const PRESETS = {
       minTxns24h: 600,
       minPairAgeMinutes: 180,
     },
-    weights: { momentum: 0.20, buyPressure: 0.22, velocity: 0.15, attention: 0.15, headroom: 0.10, freshness: 0.18 },
+    weights: { momentum: 0.20, buyPressure: 0.27, velocity: 0.10, attention: 0.05, headroom: 0.18, freshness: 0.20 },
   },
   balanced: {
     label: 'Balanced',
@@ -94,7 +102,7 @@ export const PRESETS = {
       minTxns24h: 200,
       minPairAgeMinutes: 60,
     },
-    weights: { momentum: 0.30, buyPressure: 0.18, velocity: 0.17, attention: 0.10, headroom: 0.20, freshness: 0.05 },
+    weights: { momentum: 0.28, buyPressure: 0.22, velocity: 0.10, attention: 0.03, headroom: 0.27, freshness: 0.10 },
   },
   gamble: {
     label: 'Gamble',
@@ -120,7 +128,7 @@ export const PRESETS = {
     },
     // Attention barely exists down here — nobody buys promotion for a $30K
     // coin — so that weight moves to momentum, headroom and freshness.
-    weights: { momentum: 0.28, buyPressure: 0.20, velocity: 0.15, attention: 0.05, headroom: 0.17, freshness: 0.15 },
+    weights: { momentum: 0.27, buyPressure: 0.23, velocity: 0.10, attention: 0.02, headroom: 0.20, freshness: 0.18 },
   },
 };
 
@@ -138,10 +146,10 @@ export function resolvePreset(name) {
 }
 
 export const SCORE_LABELS = {
-  momentum: 'Momentum acceleration',
+  momentum: 'Early move',
   buyPressure: 'Buy pressure',
   velocity: 'Volume velocity',
-  attention: 'Paid attention',
+  attention: 'Corroboration',
   headroom: 'Upside headroom',
   freshness: 'Freshness',
 };

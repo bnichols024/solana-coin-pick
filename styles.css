@@ -311,6 +311,14 @@ td a:hover { color: var(--gold); }
 .cal-label { font-size: 12px; color: var(--muted); }
 .cal-median { font-size: 18px; font-weight: 700; }
 .cal-n { font-size: 11px; color: var(--muted); }
+.cal-versions { display: grid; gap: 6px; margin: 10px 0 2px; }
+.cal-ver {
+  font-size: 12.5px; color: var(--muted);
+  padding: 7px 10px; border-radius: 8px; background: #0c101a;
+  border: 1px solid var(--line);
+}
+.cal-ver.is-current { border-color: var(--accent); color: var(--text); }
+.cal-ver strong { margin-right: 6px; }
 .cal-verdict { margin: 11px 0 0; font-size: 12.5px; color: var(--muted); }
 
 .hstat-k { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }

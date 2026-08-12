@@ -47,12 +47,37 @@ wildly lopsided buy/sell ratio (sell tax), or a pool already down 60%+ on thin l
 
 | Signal | Weight | What it measures |
 | --- | --- | --- |
-| Momentum acceleration | 25% | Is the curve steepening *now* — 5m vs 1h vs 6h rates |
-| Buy pressure | 20% | 1h and 6h buy/sell transaction ratio |
-| Volume velocity | 15% | 1h volume against liquidity — pool turns per hour |
-| Paid attention | 15% | Boost spend, profile, socials, corroborating sources |
-| Upside headroom | 15% | Log-inverse FDV — small cap, room to run |
-| Freshness | 10% | Sweet spot runs to 72h, or halfway through a preset's shorter age window |
+| Early move | 25% | Rising and accelerating, **discounted hard once vertical or extended** |
+| Buy pressure | 25% | 1h and 6h buy/sell transaction ratio |
+| Volume velocity | 10% | 1h volume against liquidity — pool turns per hour |
+| Corroboration | 3% | Profile, socials, multiple feeds. **Not** boost spend |
+| Upside headroom | 22% | Log-inverse FDV — small cap, room to run |
+| Freshness | 15% | Sweet spot runs to 72h, or halfway through a preset's shorter age window |
+
+### Model v2 — why these weights
+
+v1 lost money: 16 picks, median −36%. The Peak column diagnosed it. Peaks since pick were
+1.04, 1.06, 1.07, 1.23, 1.26, 1.39, 1.52 — **nothing reached 2x**, so a perfect exit would
+still have been roughly break-even against downside of −54% to −91%. The picks were
+already finished moving when they were bought.
+
+Two structural causes, both now addressed:
+
+- **Momentum rose monotonically with the 1h change**, so the most vertical candle on the
+  board always won. On meme coins that is the exit signal. `momentumScore` now peaks in
+  the middle and decays toward the extreme, and multiplies rather than adds so a flat coin
+  still scores zero.
+- **Boosts and trending list a coin *because* it already pumped.** `gecko-new` is the only
+  leading feed and was the lowest-priority seed outside Gamble, often cut by the hydration
+  cap. New pools now rank first for every preset, and the cap rose from 240 to 360.
+
+Boost spend was half of the old attention score. It is money paid to attract buyers,
+frequently by someone exiting into them, and is no longer scored at all.
+
+**Every pick is stamped with `CONFIG.modelVersion`**, and the track record reports each
+version separately — so v1's losses never average into v2's results, and a future change
+is measurable the same way. Judge a new model on **median peak**, which measures the
+finder independently of exit timing.
 
 Then risk deductions: thin float vs market cap, shallow liquidity, red hour, sellers
 outnumbering buyers.
@@ -192,7 +217,7 @@ actually calls. A test asserts the policy stays in sync with the code.
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # 144 tests
+npm test           # 156 tests
 ```
 
 **Docker / Unraid**
@@ -218,7 +243,7 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ## Testing
 
-144 tests, run on every push before deploy:
+156 tests, run on every push before deploy:
 
 ```bash
 npm test
@@ -286,6 +311,6 @@ src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            144 tests: unit, network, property/fuzz, packaging, sanitiser
+tests/            156 tests: unit, network, property/fuzz, packaging, sanitiser
 Dockerfile        nginx:alpine static image
 ```

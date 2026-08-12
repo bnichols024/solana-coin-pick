@@ -158,7 +158,10 @@ test('loadHistory ignores corrupt storage instead of throwing', () => {
 
 const { calibration } = await import('../src/history.js');
 
-const graded = (score, multiple) => ({ score, multiple, address: `a${score}${multiple}` });
+// Stamped with the current model version: calibration deliberately judges only
+// the current model's picks, so unstamped rows would count as v1 and be excluded.
+const graded = (score, multiple, modelVersion = 2) =>
+  ({ score, multiple, modelVersion, address: `a${score}${multiple}${modelVersion}` });
 
 test('calibration stays hidden until there is enough data to mean anything', () => {
   const few = Array.from({ length: 5 }, (_, i) => graded(80, 1 + i));
@@ -334,4 +337,59 @@ test('updatePeaks with nothing to record touches nothing', () => {
   const before = JSON.stringify(loadHistory());
   updatePeaks(new Map(), new Map());
   assert.equal(JSON.stringify(loadHistory()), before);
+});
+
+// --- model versioning ------------------------------------------------------
+// Without this the 16 losing v1 picks sit in the same median as new v2 picks
+// and the experiment is unreadable for weeks.
+
+test('a pick is stamped with the current model version', () => {
+  clearHistory();
+  recordPick(coin(), 80, 'buy_now', T0);
+  assert.equal(loadHistory()[0].modelVersion, 2);
+});
+
+test('picks from an older model keep their own stamp', () => {
+  clearHistory();
+  recordPick(coin({ address: 'old' }), 80, 'buy_now', T0, 1);
+  assert.equal(loadHistory()[0].modelVersion, 1);
+});
+
+test('calibration segments by version and never mixes their medians', () => {
+  const rows = [
+    ...Array.from({ length: 16 }, (_, i) => ({ score: 70, multiple: 0.36, peakMultiple: 1.2, address: `v1-${i}` })),
+    ...Array.from({ length: 10 }, (_, i) => ({ score: 70, multiple: 1.4, peakMultiple: 2.1, modelVersion: 2, address: `v2-${i}` })),
+  ];
+  const cal = calibration(rows);
+  const byVersion = Object.fromEntries(cal.versions.map((v) => [v.version, v]));
+  assert.equal(byVersion[1].n, 16, 'unstamped rows count as v1');
+  assert.equal(byVersion[1].median, 0.36);
+  assert.equal(byVersion[2].n, 10);
+  assert.equal(byVersion[2].median, 1.4);
+  assert.equal(byVersion[2].current, true);
+  assert.equal(byVersion[1].current, false);
+  assert.equal(byVersion[2].medianPeak, 2.1, 'peak is tracked per version too');
+});
+
+test('the verdict judges the current model only, not the old one it replaced', () => {
+  // v1 lost 64%; v2 is winning. The panel must not keep reporting v1's losses.
+  const rows = [
+    ...Array.from({ length: 20 }, (_, i) => ({ score: 70, multiple: 0.36, address: `v1-${i}` })),
+    ...Array.from({ length: 5 }, (_, i) => ({ score: 80, multiple: 2.0, modelVersion: 2, address: `v2a-${i}` })),
+    ...Array.from({ length: 5 }, (_, i) => ({ score: 50, multiple: 1.2, modelVersion: 2, address: `v2b-${i}` })),
+  ];
+  const cal = calibration(rows);
+  assert.ok(!/losing money/.test(cal.verdict), `v1's losses must not condemn v2: "${cal.verdict}"`);
+  assert.match(cal.verdict, /holding up/);
+});
+
+test('a new model waits for its own sample before its bands mean anything', () => {
+  const rows = [
+    ...Array.from({ length: 30 }, (_, i) => ({ score: 70, multiple: 0.4, address: `v1-${i}` })),
+    { score: 70, multiple: 1.1, modelVersion: 2, address: 'v2-0' },
+  ];
+  const cal = calibration(rows);
+  assert.equal(cal.ready, false, 'one v2 pick is not a sample');
+  assert.equal(cal.needed, 7);
+  assert.equal(cal.versions.length, 2, 'but both versions are still reported');
 });

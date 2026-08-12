@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
   normalizePair, rejectReasons, rankCandidates, scoreCandidate, impersonatesKnownToken,
-  momentumScore, buyPressureScore, headroomScore, freshnessScore, scale, logScale,
+  momentumScore, buyPressureScore, attentionScore, headroomScore, freshnessScore, scale, logScale,
 } from '../src/score.js';
 import { usd, price, pct, age } from '../src/format.js';
 import { evaluateSafety, sellSideBlocked } from '../src/safety.js';
 import { assessEntry, capBefore, entryLabel } from '../src/entry.js';
+import { resolvePreset } from '../src/config.js';
 import * as fx from './fixtures.js';
 
 const norm = (pair, extra = {}) => normalizePair(pair, extra, fx.NOW);
@@ -319,4 +320,64 @@ test('formatters handle nulls and sub-penny prices', () => {
   assert.equal(age(-5), 'unknown');
   assert.ok(price(0.00042).startsWith('$0.000'));
   assert.ok(!price(0.00042).includes('e'));
+});
+
+// --- v2 model: buy the start of a move, not the end ------------------------
+// Fitted to the v1 track record, where every pick peaked under 1.6x because the
+// score rose monotonically with the 1h change and so always chose the most
+// vertical candle on the board.
+
+const withChg = (m5, h1, h6, h24) => norm({ ...fx.goodRunner, priceChange: { m5, h1, h6, h24 } });
+
+test('an early accelerating move outscores a vertical one', () => {
+  const early = momentumScore(withChg(1, 12, 12, 20));
+  const vertical = momentumScore(withChg(10, 75, 90, 150));
+  assert.ok(early > vertical, `early ${early.toFixed(3)} should beat vertical ${vertical.toFixed(3)}`);
+  assert.ok(vertical < 0.35, 'a vertical hour must be heavily discounted');
+});
+
+test('a coin that ran hours ago is discounted even if it is still ticking up', () => {
+  const late = momentumScore(withChg(1, 8, 60, 300));   // +300% on the day already
+  const fresh = momentumScore(withChg(1, 8, 8, 15));    // same hour, no history
+  assert.ok(fresh > late * 2, `fresh ${fresh.toFixed(3)} vs late ${late.toFixed(3)}`);
+  assert.ok(late < 0.2);
+});
+
+test('a flat or falling coin still scores zero', () => {
+  // The trap in this shape: an additive "not late" term hands every dead coin
+  // most of the points, because being dead is not being late.
+  assert.equal(momentumScore(withChg(0, 0, 0, 0)), 0);
+  assert.equal(momentumScore(withChg(-2, -5, -10, -20)), 0);
+});
+
+test('the momentum curve peaks in the middle, not at the extreme', () => {
+  const samples = [2, 6, 12, 18, 25, 40, 60, 90].map((h1) => momentumScore(withChg(1, h1, h1 * 0.7, h1 * 2)));
+  const peakAt = samples.indexOf(Math.max(...samples));
+  assert.ok(peakAt > 0 && peakAt < samples.length - 1,
+    `peak should be interior, got index ${peakAt} of ${JSON.stringify(samples.map((s) => +s.toFixed(2)))}`);
+  assert.ok(samples[samples.length - 1] < samples[peakAt] / 2, 'the extreme end must fall well below the peak');
+});
+
+test('boost spend no longer moves the score at all', () => {
+  const base = { hasProfile: true, socials: 2, jupiterVerified: false, sources: ['a', 'b'] };
+  const unboosted = attentionScore({ ...base, boostAmount: 0 });
+  const heavilyBoosted = attentionScore({ ...base, boostAmount: 5000 });
+  assert.equal(unboosted, heavilyBoosted, 'promotion spend is not evidence of anything good');
+});
+
+test('corroboration still counts for something', () => {
+  const alone = attentionScore({ hasProfile: false, socials: 0, jupiterVerified: false, sources: ['a'] });
+  const corroborated = attentionScore({ hasProfile: true, socials: 3, jupiterVerified: true, sources: ['a', 'b', 'c'] });
+  assert.ok(corroborated > alone);
+  assert.ok(corroborated <= 1 && alone >= 0);
+});
+
+test('a whole-model comparison: the early coin now beats the pumping one', () => {
+  // Same liquidity, volume and trade profile; only the price action differs.
+  const pumping = norm({ ...fx.goodRunner, priceChange: { m5: 12, h1: 70, h6: 120, h24: 260 } });
+  const starting = norm({ ...fx.goodRunner, priceChange: { m5: 1.5, h1: 11, h6: 10, h24: 18 } });
+  const { scored } = rankCandidates([pumping, starting], resolvePreset('balanced'));
+  assert.equal(scored.length, 2, 'both should clear the filters');
+  assert.equal(scored[0].candidate.symbol, starting.symbol);
+  assert.ok(scored[0].score > scored[1].score);
 });
