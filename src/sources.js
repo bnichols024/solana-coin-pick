@@ -206,6 +206,8 @@ export async function fetchCurrentMarketCaps(addresses) {
           out.set(addr, {
             fdv,
             priceUsd: Number(pair?.priceUsd) || 0,
+            // Needed to pull OHLCV history for the track record.
+            pairAddress: pair?.pairAddress || '',
             liquidity: liq,
             // The entry maths reconstructs past market caps from these, so a
             // refresh must move them together with the cap or the two disagree.
@@ -224,6 +226,45 @@ export async function fetchCurrentMarketCaps(addresses) {
     }
   }
   return out;
+}
+
+/**
+ * Highest price a pool traded at since `sinceMs`, from GeckoTerminal's free
+ * OHLCV history.
+ *
+ * This exists to answer the only question that matters when picks are losing:
+ * did the coin ever run before it died? A pick that went 5x and came back is a
+ * missing exit signal; one that only ever went down is a bad pick. "Market cap
+ * now" cannot tell those apart and they need opposite fixes.
+ *
+ * @returns {Promise<number|null>} peak price in USD, or null if unavailable
+ */
+export async function fetchPeakSince(poolAddress, sinceMs, now = Date.now()) {
+  if (!poolAddress || !(sinceMs > 0)) return null;
+  const ageHours = (now - sinceMs) / 3_600_000;
+  // Hourly candles are too coarse for a pick made minutes ago.
+  const timeframe = ageHours <= 6 ? 'minute?aggregate=5&limit=200' : 'hour?aggregate=1&limit=168';
+
+  try {
+    const body = await getJson(`${GECKO}/networks/solana/pools/${poolAddress}/ohlcv/${timeframe}`);
+    const candles = body?.data?.attributes?.ohlcv_list;
+    if (!Array.isArray(candles) || !candles.length) return null;
+
+    const sinceSec = sinceMs / 1000;
+    let peak = null;
+    for (const candle of candles) {
+      // [timestamp, open, high, low, close, volume]
+      if (!Array.isArray(candle) || candle.length < 3) continue;
+      const ts = Number(candle[0]);
+      const high = Number(candle[2]);
+      if (!Number.isFinite(ts) || !Number.isFinite(high)) continue;
+      if (ts < sinceSec) continue;             // before we picked it — not ours
+      if (peak == null || high > peak) peak = high;
+    }
+    return peak;
+  } catch {
+    return null; // ungraded peak is honest; never break the table over it
+  }
 }
 
 /** Best-effort Jupiter verified set. Failure is silent — it is a bonus only. */

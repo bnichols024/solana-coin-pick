@@ -1,7 +1,7 @@
 // Orchestration + rendering. Fetch -> normalize -> filter -> score -> show.
 
 import { CONFIG, SCORE_LABELS, resolvePreset } from './config.js';
-import { discoverCandidates, hydratePairs, fetchJupiterVerified, fetchCurrentMarketCaps } from './sources.js';
+import { discoverCandidates, hydratePairs, fetchJupiterVerified, fetchCurrentMarketCaps, fetchPeakSince } from './sources.js';
 import { loadHistory, recordPick, gradeHistory, clearHistory, calibration } from './history.js';
 import { normalizePair, rankCandidates } from './score.js';
 import { vetToken } from './safety.js';
@@ -512,22 +512,33 @@ async function renderHistory({ refresh = true } = {}) {
   if (!stored.length) { historyEl.hidden = true; return; }
 
   let current = new Map();
+  let peaks = new Map();
   if (refresh) {
     try {
       current = await fetchCurrentMarketCaps(stored.map((p) => p.address));
     } catch {
       current = new Map(); // ungraded is fine; never break the page over this
     }
+    // Peak needs one OHLCV call per pick, so cap it at the newest handful and
+    // run them in series to stay inside GeckoTerminal's rate limit.
+    for (const pick of stored.slice(0, 15)) {
+      const pool = current.get(pick.address)?.pairAddress;
+      if (!pool) continue;
+      const peak = await fetchPeakSince(pool, pick.pickedAt);
+      if (peak > 0) peaks.set(pick.address, peak);
+    }
   }
 
-  const { rows, stats } = gradeHistory(stored, current);
+  const { rows, stats } = gradeHistory(stored, current, Date.now(), peaks);
 
   $('history-stats').innerHTML = [
     ['Picks', stats.total],
     ['Graded', stats.graded],
     ['Up 1.5x+', stats.wins],
     ['Down 75%+', stats.rugs],
-    ['Median', stats.median != null ? `${stats.median.toFixed(2)}x` : '—'],
+    ['Median now', stats.median != null ? `${stats.median.toFixed(2)}x` : '—'],
+    ['Median peak', stats.medianPeak != null ? `${stats.medianPeak.toFixed(2)}x` : '—'],
+    ['Ever ran 1.5x+', stats.everRan ?? '—'],
     ['Best', stats.best != null ? `${stats.best.toFixed(2)}x` : '—'],
   ].map(([k, v]) => `<div class="hstat"><span class="hstat-k">${esc(k)}</span><span class="hstat-v">${esc(String(v))}</span></div>`).join('');
 
@@ -540,6 +551,9 @@ async function renderHistory({ refresh = true } = {}) {
       <td class="${r.entryState === 'buy_now' ? '' : 'warn-cell'}">${esc(entryLabel(r.entryState))}</td>
       <td>${usd(r.pickedMc)}</td>
       <td>${r.nowMc != null ? usd(r.nowMc) : '—'}</td>
+      <td>${r.peakMultiple != null
+        ? `<span class="${r.peakMultiple >= 1.5 ? 'up' : ''}">${r.peakMultiple.toFixed(2)}x</span>`
+        : '<span class="muted">—</span>'}</td>
       <td>${resultText(r)}</td>
     </tr>`).join('');
 

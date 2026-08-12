@@ -73,17 +73,28 @@ export function recordPick(candidate, score, entryState, now = Date.now()) {
  * Grade recorded picks against their current market cap.
  * @param {Array} history
  * @param {Map<string, object>} current address -> { fdv, priceUsd } (missing = unknown)
+ * @param {Map<string, number>} peaks address -> highest price since the pick
  * @returns {{rows: Array, stats: {graded:number, wins:number, rugs:number, best:number, median:number}}}
  */
-export function gradeHistory(history, current, now = Date.now()) {
+export function gradeHistory(history, current, now = Date.now(), peaks = new Map()) {
   const rows = history.map((p) => {
     const live = current.get(p.address);
     const nowMc = live && live.fdv > 0 ? live.fdv : null;
     const multiple = nowMc != null && p.pickedMc > 0 ? nowMc / p.pickedMc : null;
+
+    // Peak is carried as a price (from OHLCV) and converted with the price we
+    // recorded at pick time, so it stays comparable to the market-cap columns.
+    const peakPrice = peaks.get(p.address);
+    const peakMultiple = peakPrice > 0 && p.pickedPrice > 0
+      ? Math.max(peakPrice / p.pickedPrice, multiple ?? 0)
+      : null;
+
     return {
       ...p,
       nowMc,
       multiple,
+      peakMultiple,
+      peakMc: peakMultiple != null && p.pickedMc > 0 ? p.pickedMc * peakMultiple : null,
       changePct: multiple != null ? (multiple - 1) * 100 : null,
       ageMs: now - p.pickedAt,
     };
@@ -106,6 +117,14 @@ export function gradeHistory(history, current, now = Date.now()) {
       rugs: graded.filter((r) => r.multiple <= 0.25).length,
       best: multiples.length ? multiples[multiples.length - 1] : null,
       median,
+      // The diagnostic split: did picks run before dying, or never run at all?
+      everRan: graded.filter((r) => r.peakMultiple >= 1.5).length,
+      medianPeak: (() => {
+        const peaked = graded.map((r) => r.peakMultiple).filter((m) => m != null).sort((a, b) => a - b);
+        if (!peaked.length) return null;
+        const mid = peaked.length / 2;
+        return peaked.length % 2 ? peaked[(peaked.length - 1) / 2] : (peaked[mid - 1] + peaked[mid]) / 2;
+      })(),
     },
   };
 }
@@ -145,20 +164,31 @@ export function calibration(rows, minGraded = 8) {
     };
   }).filter((b) => b.n > 0);
 
-  // Is the ordering the model claims actually present in the results?
+  // Absolute performance comes first. Ranking one losing band above another
+  // losing band is not the model working, and an earlier version of this said
+  // "holding up" while every band was down 60%.
   const ranked = buckets.filter((b) => b.median != null);
+  const overall = median(graded.map((r) => r.multiple));
   let verdict = 'not enough spread to tell';
-  if (ranked.length >= 2) {
+
+  if (overall != null && overall < 0.8) {
+    const worstBand = ranked.length >= 2 && ranked[0].median < ranked[ranked.length - 1].median
+      ? ' Higher scores are doing no better than lower ones.'
+      : '';
+    verdict = `The median pick is down ${((1 - overall) * 100).toFixed(0)}% — the model is losing money regardless of score.${worstBand}`;
+  } else if (ranked.length >= 2) {
     const top = ranked[0];
     const rest = ranked.slice(1);
-    const beatsAll = rest.every((b) => top.median >= b.median);
-    const losesToAll = rest.every((b) => top.median < b.median);
-    if (beatsAll) verdict = 'higher scores are doing better — the model is holding up';
-    else if (losesToAll) verdict = 'higher scores are doing worse — treat the score with suspicion';
-    else verdict = 'mixed — no clear relationship between score and outcome yet';
+    if (rest.every((b) => top.median >= b.median)) {
+      verdict = 'higher scores are doing better — the model is holding up';
+    } else if (rest.every((b) => top.median < b.median)) {
+      verdict = 'higher scores are doing worse — treat the score with suspicion';
+    } else {
+      verdict = 'mixed — no clear relationship between score and outcome yet';
+    }
   }
 
-  return { ready: true, needed: 0, buckets, verdict };
+  return { ready: true, needed: 0, buckets, verdict, overall };
 }
 
 export function clearHistory() {

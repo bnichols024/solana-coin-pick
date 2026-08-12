@@ -158,6 +158,11 @@ against live data whenever you open the page: median result, best, how many went
 1.5x+, and how many lost 75%+. Nothing leaves the device and nothing is cleaned up to
 look good — if the picks are bad, the table says so. There is a Clear button.
 
+Each row also shows the **peak** it reached since being picked, pulled from GeckoTerminal's
+free OHLCV history. This is the diagnostic that matters when picks are losing: a coin that
+went 5x and came back is a missing *exit* signal, one that only ever went down is a bad
+*pick*, and the "market cap now" column cannot tell those apart. They need opposite fixes.
+
 Once there are at least eight graded picks, the app also **marks its own homework**:
 it buckets results by the score it assigned and reports the median multiple of each
 band. If high-scoring picks are not outperforming low-scoring ones, it says so in as
@@ -184,7 +189,7 @@ actually calls. A test asserts the policy stays in sync with the code.
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # 133 tests
+npm test           # 139 tests
 ```
 
 **Docker / Unraid**
@@ -210,7 +215,7 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ## Testing
 
-133 tests, run on every push before deploy:
+139 tests, run on every push before deploy:
 
 ```bash
 npm test
@@ -278,6 +283,6 @@ src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            133 tests: unit, network, property/fuzz, packaging, sanitiser
+tests/            139 tests: unit, network, property/fuzz, packaging, sanitiser
 Dockerfile        nginx:alpine static image
 ```

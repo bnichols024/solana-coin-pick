@@ -212,3 +212,76 @@ test('calibration drops empty bands rather than showing dashes', () => {
   assert.equal(cal.buckets.length, 1, 'only the populated band appears');
   assert.equal(cal.buckets[0].label, '70+');
 });
+
+// --- peak tracking ---------------------------------------------------------
+// The diagnostic that separates "found a runner, missed the exit" from
+// "picked something that only ever went down". They need opposite fixes.
+
+test('a pick that ran then died is distinguished from one that never ran', () => {
+  const history = [
+    { address: 'ran', symbol: 'RAN', pickedAt: T0, pickedMc: 100_000, pickedPrice: 0.001 },
+    { address: 'dead', symbol: 'DEAD', pickedAt: T0, pickedMc: 100_000, pickedPrice: 0.001 },
+  ];
+  const current = new Map([
+    ['ran', { fdv: 10_000 }],   // now -90%...
+    ['dead', { fdv: 10_000 }],  // ...identical on the "now" column
+  ]);
+  const peaks = new Map([
+    ['ran', 0.005],   // peaked at 5x the pick price
+    ['dead', 0.0011], // never went anywhere
+  ]);
+
+  const { rows, stats } = gradeHistory(history, current, T0 + 3600_000, peaks);
+  assert.equal(rows[0].multiple, 0.1);
+  assert.equal(rows[1].multiple, 0.1, 'both look identical on result alone');
+  assert.equal(rows[0].peakMultiple, 5, 'but one of them was a 5x');
+  assert.ok(Math.abs(rows[1].peakMultiple - 1.1) < 1e-9);
+  assert.equal(rows[0].peakMc, 500_000);
+  assert.equal(stats.everRan, 1, 'exactly one ever ran');
+});
+
+test('peak is never below the current result', () => {
+  // A coin still at its high has no OHLCV peak above spot; the peak must not
+  // read as lower than where it is now.
+  const history = [{ address: 'up', symbol: 'UP', pickedAt: T0, pickedMc: 100, pickedPrice: 1 }];
+  const current = new Map([['up', { fdv: 300 }]]);
+  const { rows } = gradeHistory(history, current, T0, new Map([['up', 1.2]]));
+  assert.equal(rows[0].peakMultiple, 3, 'falls back to the live multiple when it is higher');
+});
+
+test('a missing peak leaves the row ungraded rather than claiming 1x', () => {
+  const history = [{ address: 'x', symbol: 'X', pickedAt: T0, pickedMc: 100, pickedPrice: 1 }];
+  const { rows, stats } = gradeHistory(history, new Map([['x', { fdv: 50 }]]), T0, new Map());
+  assert.equal(rows[0].peakMultiple, null);
+  assert.equal(rows[0].peakMc, null);
+  assert.equal(stats.medianPeak, null);
+});
+
+test('a pick with no recorded price cannot fake a peak', () => {
+  const history = [{ address: 'x', symbol: 'X', pickedAt: T0, pickedMc: 100, pickedPrice: 0 }];
+  const { rows } = gradeHistory(history, new Map([['x', { fdv: 50 }]]), T0, new Map([['x', 9]]));
+  assert.equal(rows[0].peakMultiple, null);
+});
+
+// --- calibration honesty ---------------------------------------------------
+
+test('calibration refuses to call a losing model healthy', () => {
+  // The real failure this caught: both bands down ~61%, ranked 0.39 above
+  // 0.38, and the panel reported "the model is holding up".
+  const rows = [
+    ...Array.from({ length: 5 }, (_, i) => graded(60 + i, 0.39)),
+    ...Array.from({ length: 5 }, (_, i) => graded(40 + i, 0.38)),
+  ];
+  const cal = calibration(rows);
+  assert.ok(!/holding up/.test(cal.verdict), `must not claim success: "${cal.verdict}"`);
+  assert.match(cal.verdict, /losing money/);
+  assert.match(cal.verdict, /down \d+%/, 'states the actual damage as a number');
+});
+
+test('calibration still reports a genuinely healthy model as healthy', () => {
+  const rows = [
+    ...Array.from({ length: 5 }, () => graded(80, 3)),
+    ...Array.from({ length: 5 }, () => graded(40, 1.1)),
+  ];
+  assert.match(calibration(rows).verdict, /holding up/);
+});
