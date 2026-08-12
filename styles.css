@@ -95,6 +95,16 @@ h1 {
 .score-num { font-size: 38px; font-weight: 800; line-height: 1; color: var(--gold); }
 .score-cap { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
 
+.live-note {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 14px; font-size: 12px; color: var(--muted);
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
 .band {
   margin: 20px 0;
   padding: 14px 16px;
@@ -204,6 +214,35 @@ tbody tr { border-top: 1px solid var(--line); }
 tbody tr:hover { background: #0c101a; }
 td a { color: var(--text); text-decoration: none; font-weight: 600; }
 td a:hover { color: var(--gold); }
+
+.rejected {
+  margin-top: 22px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+}
+.rejected summary {
+  cursor: pointer; color: var(--muted); font-size: 13px;
+  letter-spacing: .04em;
+}
+.rejected summary:hover { color: var(--text); }
+.rejected-body { margin-top: 12px; display: grid; gap: 7px; }
+.rej-row {
+  display: grid; grid-template-columns: auto 1fr; gap: 10px;
+  align-items: baseline; font-size: 13px;
+}
+.rej-row .rej-syms {
+  grid-column: 2; font-size: 11px; color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere;
+}
+.rej-count {
+  background: #0c101a; border: 1px solid var(--line); border-radius: 6px;
+  padding: 1px 8px; font-weight: 700; font-size: 12px; min-width: 30px; text-align: center;
+}
+.rej-sym { font-weight: 700; color: var(--red); }
+.rej-why { color: var(--muted); }
+.rej-danger .rej-why { color: var(--red); }
 
 .history { margin-top: 34px; }
 .history-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }

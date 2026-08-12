@@ -35,11 +35,14 @@ btn.addEventListener('click', run);
 
 async function run() {
   btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
   btn.querySelector('.cta-label').textContent = 'Scanning the chain…';
   logEl.hidden = false;
   logEl.textContent = '';
   resultEl.hidden = true;
   runnersEl.hidden = true;
+  $('rejected').hidden = true;
+  stopLiveRefresh();
 
   const started = performance.now();
   try {
@@ -89,6 +92,7 @@ async function run() {
     if (!winner) {
       showNotice('No coin clears the bar right now',
         `All ${rejected.length} candidates in view failed the safety and liquidity filters — too thin, too big, too new, or already blown off. That is a real answer: a bad field is worth sitting out. Try again in an hour.`);
+      renderRejected(rejected);
       return;
     }
 
@@ -107,6 +111,7 @@ async function run() {
       showNotice('Everything on the shortlist failed its rug check',
         `The top ${vetted.length} coins by momentum all failed contract vetting — live mint or freeze authority, unlocked liquidity, or honeypot patterns. Refusing to hand you a rug is the correct output here. Try again later.`);
       renderRunnersUp(scored.slice(0, 6), vetted);
+      renderRejected(rejected, rejectedForSafety);
       return;
     }
 
@@ -114,6 +119,8 @@ async function run() {
     if (failures.length) log(`Note: scored without ${failures.join(', ')}.`, 'warn');
     renderWinner(safeWinner.entry, safeWinner.safety);
     renderRunnersUp(scored.filter((e) => e !== safeWinner.entry).slice(0, 5), vetted);
+    renderRejected(rejected, rejectedForSafety);
+    startLiveRefresh(safeWinner.entry, safeWinner.safety);
     log(`Done in ${((performance.now() - started) / 1000).toFixed(1)}s.`);
 
     // Record it so the track record can grade this call later.
@@ -129,6 +136,7 @@ async function run() {
     console.error(err);
     showNotice('Scan failed', esc(err?.message || 'Unknown error') + ' — try again in a moment.');
   } finally {
+    btn.removeAttribute('aria-busy');
     btn.disabled = false;
     btn.querySelector('.cta-label').textContent = 'Generate Another Winner';
   }
@@ -200,7 +208,7 @@ function renderEntryTiming(c) {
     </div>`;
 }
 
-function renderWinner(entry, safety) {
+function renderWinner(entry, safety, { live = false } = {}) {
   const c = entry.candidate;
   const bars = Object.entries(entry.parts).map(([key, p]) => `
     <div class="bar-row">
@@ -228,6 +236,11 @@ function renderWinner(entry, safety) {
           <div class="score-num">${entry.score}</div>
           <div class="score-cap">Moonshot score</div>
         </div>
+      </div>
+      <div class="live-note">
+        ${live
+          ? '<span class="live-dot"></span>Prices updated just now — entry levels recalculated'
+          : '<span class="live-dot"></span>Live — prices refresh every 45s'}
       </div>
 
       <div class="band">
@@ -326,6 +339,91 @@ function renderRunnersUp(list, vetted = new Map()) {
     </tr>`;
   }).join('');
   runnersEl.hidden = false;
+}
+
+// --- live refresh ----------------------------------------------------------
+// Entry advice is only good while the price it was computed from is current, so
+// the displayed winner re-checks itself. One token, one request per interval.
+
+const LIVE_REFRESH_MS = 45_000;
+let liveTimer = null;
+
+function stopLiveRefresh() {
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+}
+
+function startLiveRefresh(entry, safety) {
+  stopLiveRefresh();
+  const address = entry.candidate.address;
+
+  liveTimer = setInterval(async () => {
+    // Nothing to update if the card has been replaced or the tab is hidden.
+    if (document.hidden || !document.getElementById('addr')) return;
+    try {
+      const live = await fetchCurrentMarketCaps([address]);
+      const fresh = live.get(address);
+      if (!fresh || !(fresh.fdv > 0)) return;
+
+      const before = entry.candidate.fdv;
+      // Move the cap and the price-change window together — the entry maths
+      // derives past caps from these, so a half-updated candidate lies.
+      Object.assign(entry.candidate, {
+        fdv: fresh.fdv,
+        marketCap: fresh.fdv,
+        priceUsd: fresh.priceUsd || entry.candidate.priceUsd,
+        liquidity: fresh.liquidity || entry.candidate.liquidity,
+        chg5m: fresh.chg5m,
+        chg1h: fresh.chg1h,
+        chg6h: fresh.chg6h,
+        chg24h: fresh.chg24h,
+        vol1: fresh.vol1 || entry.candidate.vol1,
+        vol6: fresh.vol6 || entry.candidate.vol6,
+      });
+      if (Math.abs(fresh.fdv - before) / before < 0.005) return; // noise
+
+      renderWinner(entry, safety, { live: true });
+    } catch {
+      // A failed refresh just means the card keeps its last good values.
+    }
+  }, LIVE_REFRESH_MS);
+}
+
+/**
+ * Show what was thrown away and why. The filters are the most opinionated part
+ * of the app, so they should be auditable rather than taken on trust.
+ */
+function renderRejected(rejected, rejectedForSafety = []) {
+  const el = $('rejected');
+  const total = rejected.length + rejectedForSafety.length;
+  if (!total) { el.hidden = true; return; }
+
+  // Contract failures first — they are the most interesting rejections.
+  const safetyRows = rejectedForSafety.map(({ entry, safety }) => `
+    <div class="rej-row rej-danger">
+      <span class="rej-sym">$${esc(entry.candidate.symbol)}</span>
+      <span class="rej-why">${esc(safety.rejections.join(' · '))}</span>
+    </div>`);
+
+  // Group the market-filter rejections by reason: "31 too thin" reads better
+  // than thirty-one near-identical lines.
+  const byReason = new Map();
+  for (const { candidate, reasons } of rejected) {
+    const key = reasons[0] || 'unknown';
+    if (!byReason.has(key)) byReason.set(key, []);
+    byReason.get(key).push(candidate.symbol);
+  }
+  const grouped = [...byReason.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([reason, syms]) => `
+      <div class="rej-row">
+        <span class="rej-count">${syms.length}</span>
+        <span class="rej-why">${esc(reason)}</span>
+        <span class="rej-syms">${esc(syms.slice(0, 8).join(', '))}${syms.length > 8 ? ` +${syms.length - 8} more` : ''}</span>
+      </div>`);
+
+  $('rejected-count').textContent = String(total);
+  $('rejected-body').innerHTML = safetyRows.join('') + grouped.join('');
+  el.hidden = false;
 }
 
 // --- track record ----------------------------------------------------------

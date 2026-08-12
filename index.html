@@ -21,7 +21,7 @@
 
   <section id="log" class="log" hidden aria-live="polite"></section>
 
-  <section id="result" class="result" hidden></section>
+  <section id="result" class="result" hidden aria-live="polite"></section>
 
   <section id="runners" class="runners" hidden>
     <h2>Runners-up</h2>
@@ -34,6 +34,11 @@
       </table>
     </div>
   </section>
+
+  <details id="rejected" class="rejected" hidden>
+    <summary><span id="rejected-count">0</span> candidates rejected — see why</summary>
+    <div id="rejected-body" class="rejected-body"></div>
+  </details>
 
   <section id="history" class="history" hidden>
     <div class="history-head">

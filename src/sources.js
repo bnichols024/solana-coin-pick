@@ -201,7 +201,20 @@ export async function fetchCurrentMarketCaps(addresses) {
         // Keep the deepest pool's view, same rule as hydration.
         const liq = Number(pair?.liquidity?.usd) || 0;
         if (!prev || liq > prev._liq) {
-          out.set(addr, { fdv, priceUsd: Number(pair?.priceUsd) || 0, _liq: liq });
+          out.set(addr, {
+            fdv,
+            priceUsd: Number(pair?.priceUsd) || 0,
+            liquidity: liq,
+            // The entry maths reconstructs past market caps from these, so a
+            // refresh must move them together with the cap or the two disagree.
+            chg5m: Number(pair?.priceChange?.m5) || 0,
+            chg1h: Number(pair?.priceChange?.h1) || 0,
+            chg6h: Number(pair?.priceChange?.h6) || 0,
+            chg24h: Number(pair?.priceChange?.h24) || 0,
+            vol1: Number(pair?.volume?.h1) || 0,
+            vol6: Number(pair?.volume?.h6) || 0,
+            _liq: liq,
+          });
         }
       }
     } catch {
