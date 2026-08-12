@@ -12,7 +12,7 @@
 <main class="wrap">
   <header class="head">
     <h1>Winning Meme&nbsp;Coin Generator</h1>
-    <p class="sub">Scans every free Solana market feed — boosted tokens, new pools, trending pools — filters the rugs, and ranks what is left on 24-hour moonshot odds.</p>
+    <p class="sub">Scans every free Solana market feed — boosted tokens, new pools, trending pools — ranks them on 24-hour moonshot odds, then checks the winner's actual contract for live mint authority, freeze authority, unlocked liquidity and honeypot patterns.</p>
   </header>
 
   <button id="generate" class="cta" type="button">
@@ -28,7 +28,7 @@
     <div class="table-scroll">
       <table id="runners-table">
         <thead>
-          <tr><th>#</th><th>Coin</th><th>Score</th><th>Mkt cap</th><th>Liq</th><th>1h</th><th>24h</th><th>Age</th></tr>
+          <tr><th>#</th><th>Coin</th><th>Score</th><th>Safety</th><th>Mkt cap</th><th>Liq</th><th>1h</th><th>24h</th><th>Age</th></tr>
         </thead>
         <tbody></tbody>
       </table>

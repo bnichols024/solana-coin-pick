@@ -5,7 +5,7 @@
 export const CONFIG = {
   // --- hard filters -------------------------------------------------------
   filters: {
-    minLiquidityUsd: 15_000,      // below this you cannot exit your own position
+    minLiquidityUsd: 20_000,      // below this you cannot exit your own position
     maxLiquidityUsd: 2_000_000,   // above this a 10x in a day is not happening
     minVolume24hUsd: 50_000,      // no real flow = no move
     minVolumeToLiquidity: 1.0,    // 24h volume must at least turn the pool once
@@ -17,6 +17,17 @@ export const CONFIG = {
     maxAvgTradeUsd: 25_000,       // a handful of whales, not a real crowd
     blowOffChange24h: 400,        // % — already ran this hard...
     blowOffChange1h: 0,           // ...and is now red on the hour = too late
+    honeypotMinBuys: 50,          // this many buyers and zero sellers = trap
+    honeypotBuySellRatio: 15,     // buys/sells this lopsided is a sell tax or trap
+    corpseChange24h: -60,         // down this hard = the rug already happened
+    corpseLiquidityUsd: 60_000,
+  },
+
+  // --- contract vetting (src/safety.js) -----------------------------------
+  safety: {
+    maxVetted: 10,       // contract-check this many top-ranked coins per click
+    vetConcurrency: 3,   // parallel vets — keep the free RPCs happy
+    unverifiedPenalty: 8, // points deducted per check we could not complete
   },
 
   // --- scoring weights (must sum to 1) ------------------------------------

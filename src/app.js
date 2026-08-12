@@ -3,6 +3,7 @@
 import { CONFIG, SCORE_LABELS } from './config.js';
 import { discoverCandidates, hydratePairs, fetchJupiterVerified } from './sources.js';
 import { normalizePair, rankCandidates } from './score.js';
+import { vetToken } from './safety.js';
 import { usd, price, pct, age, count, shortAddr } from './format.js';
 
 const $ = (id) => document.getElementById(id);
@@ -88,10 +89,28 @@ async function run() {
       return;
     }
 
-    log(`Winner: ${winner.candidate.symbol} — score ${winner.score}/100`, 'ok');
+    // Market shape got us a shortlist. Now check the contracts themselves —
+    // mint authority, freeze authority, LP lock, honeypot patterns — and take
+    // the highest-ranked coin that actually survives.
+    log('Running contract rug checks on the shortlist…');
+    const { vetted, safeWinner, rejectedForSafety } = await vetShortlist(scored, log);
+
+    if (rejectedForSafety.length) {
+      log(`${rejectedForSafety.length} rejected by contract checks: ${
+        rejectedForSafety.map((v) => v.entry.candidate.symbol).join(', ')}`, 'warn');
+    }
+
+    if (!safeWinner) {
+      showNotice('Everything on the shortlist failed its rug check',
+        `The top ${vetted.length} coins by momentum all failed contract vetting — live mint or freeze authority, unlocked liquidity, or honeypot patterns. Refusing to hand you a rug is the correct output here. Try again later.`);
+      renderRunnersUp(scored.slice(0, 6), vetted);
+      return;
+    }
+
+    log(`Winner: ${safeWinner.entry.candidate.symbol} — score ${safeWinner.entry.score}/100, contract checks passed`, 'ok');
     if (failures.length) log(`Note: scored without ${failures.join(', ')}.`, 'warn');
-    renderWinner(winner);
-    renderRunnersUp(runnersUp);
+    renderWinner(safeWinner.entry, safeWinner.safety);
+    renderRunnersUp(scored.filter((e) => e !== safeWinner.entry).slice(0, 5), vetted);
     log(`Done in ${((performance.now() - started) / 1000).toFixed(1)}s.`);
   } catch (err) {
     console.error(err);
@@ -100,6 +119,37 @@ async function run() {
     btn.disabled = false;
     btn.querySelector('.cta-label').textContent = 'Generate Another Winner';
   }
+}
+
+/**
+ * Contract-vet the shortlist in small parallel batches, best-scoring first, and
+ * stop at the first coin that passes. Returns every vet performed so the
+ * runners-up table can show who failed and why.
+ */
+async function vetShortlist(scored, logFn) {
+  const { maxVetted, vetConcurrency, unverifiedPenalty } = CONFIG.safety;
+  const shortlist = scored.slice(0, maxVetted);
+  const vetted = new Map(); // entry -> safety result
+  const rejectedForSafety = [];
+  const passes = [];
+
+  for (let i = 0; i < shortlist.length; i += vetConcurrency) {
+    const batch = shortlist.slice(i, i + vetConcurrency);
+    logFn(`Checking contracts: ${batch.map((e) => e.candidate.symbol).join(', ')}…`);
+    const results = await Promise.all(batch.map((e) => vetToken(e.candidate.address)));
+
+    batch.forEach((entry, j) => {
+      const safety = results[j];
+      vetted.set(entry, safety);
+      if (safety.verdict === 'reject') rejectedForSafety.push({ entry, safety });
+      // A coin we could not fully check is worse than one we could. Deducting
+      // here means a slightly lower-scoring but fully-verified coin wins.
+      else passes.push({ entry, safety, effective: entry.score - unverifiedPenalty * safety.unverified.length });
+    });
+  }
+
+  passes.sort((a, b) => b.effective - a.effective);
+  return { vetted, safeWinner: passes[0] || null, rejectedForSafety };
 }
 
 function showNotice(title, body) {
@@ -111,7 +161,30 @@ function chg(v) {
   return `<span class="${v >= 0 ? 'up' : 'down'}">${pct(v)}</span>`;
 }
 
-function renderWinner(entry) {
+function renderSafety(safety) {
+  if (!safety) return '';
+  const rows = [];
+  for (const name of safety.checked) {
+    rows.push(`<li class="pass">${esc(name)} — passed</li>`);
+  }
+  for (const w of safety.warnings) {
+    rows.push(`<li class="warn">${esc(w)}</li>`);
+  }
+  for (const u of safety.unverified) {
+    rows.push(`<li class="unknown">Could not verify: ${esc(u)}</li>`);
+  }
+  let banner = '';
+  if (safety.unverified.length && !safety.checked.length) {
+    banner = `<p class="safety-gap danger">⛔ <strong>No contract checks could run.</strong> This coin is completely unvetted — the rug filters that would normally reject it were offline, so it was picked on price action alone. Run it through RugCheck yourself before you touch it.</p>`;
+  } else if (safety.unverified.length) {
+    banner = `<p class="safety-gap">⚠ ${safety.unverified.length} of ${
+      safety.unverified.length + safety.checked.length
+    } contract checks could not run, so this pick is only partly vetted. Verify on RugCheck before buying.</p>`;
+  }
+  return `<h3 class="section">Contract safety</h3><ul class="safety">${rows.join('')}</ul>${banner}`;
+}
+
+function renderWinner(entry, safety) {
   const c = entry.candidate;
   const bars = Object.entries(entry.parts).map(([key, p]) => `
     <div class="bar-row">
@@ -164,6 +237,7 @@ function renderWinner(entry) {
       <h3 class="section">Why this one</h3>
       <div class="bars">${bars}</div>
       ${risks}
+      ${renderSafety(safety)}
 
       <h3 class="section">Contract address</h3>
       <div class="addr-row">
@@ -194,7 +268,18 @@ function renderWinner(entry) {
   });
 }
 
-function renderRunnersUp(list) {
+function safetyCell(safety) {
+  if (!safety) return '<td title="not checked — ranked below the shortlist">–</td>';
+  if (safety.verdict === 'reject') {
+    return `<td class="down" title="${esc(safety.rejections.join('; '))}">✗ rug risk</td>`;
+  }
+  if (safety.unverified.length) {
+    return `<td class="warn-cell" title="${esc(safety.unverified.join('; '))}">partial</td>`;
+  }
+  return '<td class="up" title="all contract checks passed">✓</td>';
+}
+
+function renderRunnersUp(list, vetted = new Map()) {
   if (!list.length) { runnersEl.hidden = true; return; }
   const tbody = $('runners-table').querySelector('tbody');
   tbody.innerHTML = list.map((e, i) => {
@@ -203,6 +288,7 @@ function renderRunnersUp(list) {
       <td>${i + 2}</td>
       <td><a href="${esc(c.url || `https://dexscreener.com/solana/${c.address}`)}" target="_blank" rel="noopener noreferrer" title="${esc(shortAddr(c.address))}">$${esc(c.symbol)}</a></td>
       <td>${e.score}</td>
+      ${safetyCell(vetted.get(e))}
       <td>${usd(c.fdv)}</td>
       <td>${usd(c.liquidity)}</td>
       <td>${chg(c.chg1h)}</td>

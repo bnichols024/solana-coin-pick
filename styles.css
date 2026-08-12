@@ -123,6 +123,26 @@ h3.section { font-size: 13px; letter-spacing: .16em; text-transform: uppercase; 
 .risks li { color: var(--red); font-size: 13px; padding-left: 18px; position: relative; }
 .risks li::before { content: '⚠'; position: absolute; left: 0; }
 
+.safety { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 5px; }
+.safety li { font-size: 13px; padding-left: 22px; position: relative; }
+.safety li.pass { color: var(--green); }
+.safety li.pass::before { content: '✓'; position: absolute; left: 0; }
+.safety li.warn { color: var(--gold); }
+.safety li.warn::before { content: '⚠'; position: absolute; left: 0; }
+.safety li.unknown { color: var(--muted); }
+.safety li.unknown::before { content: '?'; position: absolute; left: 0; font-weight: 700; }
+.safety-gap {
+  margin: 12px 0 0; padding: 11px 13px; font-size: 13px;
+  color: var(--gold); background: rgba(255, 204, 77, .08);
+  border: 1px solid rgba(255, 204, 77, .3); border-radius: 10px;
+}
+.safety-gap.danger {
+  color: var(--red);
+  background: rgba(255, 92, 92, .1);
+  border-color: rgba(255, 92, 92, .45);
+}
+td.warn-cell { color: var(--gold); }
+
 .addr-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
 .addr {
   font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;

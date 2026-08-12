@@ -100,6 +100,18 @@ export function rejectReasons(c, f = CONFIG.filters) {
   if (c.avgTradeUsd > f.maxAvgTradeUsd) out.push('a few whales, not a crowd');
   if (c.chg24h > f.blowOffChange24h && c.chg1h < f.blowOffChange1h) out.push('blow-off top — already ran and rolling over');
 
+  // Honeypot tells, straight from the trade counts — no extra API needed.
+  if (c.buys24h >= f.honeypotMinBuys && c.sells24h === 0) {
+    out.push('nobody has ever sold it — almost certainly a honeypot');
+  } else if (c.sells24h > 0 && c.buys24h / c.sells24h > f.honeypotBuySellRatio && c.buys24h >= f.honeypotMinBuys) {
+    out.push('buyers vastly outnumber sellers — likely a sell tax or trap');
+  }
+
+  // A pool that already collapsed is not an entry, it is a corpse.
+  if (c.chg24h < f.corpseChange24h && c.liquidity < f.corpseLiquidityUsd) {
+    out.push('already collapsed — the rug has happened');
+  }
+
   return out;
 }
 
