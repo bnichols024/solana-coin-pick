@@ -49,72 +49,102 @@ export async function discoverCandidates(log = () => {}) {
     seeds.set(address, cur);
   };
 
+  // Every list endpoint gets the same treatment: a non-array response counts as
+  // zero rows rather than throwing, so an API changing shape degrades to "that
+  // source found nothing" instead of taking the whole scan down.
+  const rowsOf = (v) => (Array.isArray(v) ? v : Array.isArray(v?.data) ? v.data : []);
+
   const tasks = [
     {
       name: 'DexScreener boosts (latest)',
       run: async () => {
-        const rows = await getJson(`${DEX}/token-boosts/latest/v1`);
-        for (const r of rows || []) {
-          if (!isSolana(r.chainId)) continue;
+        let n = 0;
+        for (const r of rowsOf(await getJson(`${DEX}/token-boosts/latest/v1`))) {
+          if (!isSolana(r?.chainId)) continue;
           add(r.tokenAddress, 'boosts-latest', { boostAmount: r.totalAmount || r.amount || 0, icon: r.icon });
+          n++;
         }
+        return n;
       },
     },
     {
       name: 'DexScreener boosts (top)',
       run: async () => {
-        const rows = await getJson(`${DEX}/token-boosts/top/v1`);
-        for (const r of rows || []) {
-          if (!isSolana(r.chainId)) continue;
+        let n = 0;
+        for (const r of rowsOf(await getJson(`${DEX}/token-boosts/top/v1`))) {
+          if (!isSolana(r?.chainId)) continue;
           add(r.tokenAddress, 'boosts-top', { boostAmount: r.totalAmount || r.amount || 0, icon: r.icon });
+          n++;
         }
+        return n;
       },
     },
     {
       name: 'DexScreener profiles',
       run: async () => {
-        const rows = await getJson(`${DEX}/token-profiles/latest/v1`);
-        for (const r of rows || []) {
-          if (!isSolana(r.chainId)) continue;
+        let n = 0;
+        for (const r of rowsOf(await getJson(`${DEX}/token-profiles/latest/v1`))) {
+          if (!isSolana(r?.chainId)) continue;
           add(r.tokenAddress, 'profiles', { hasProfile: true, icon: r.icon });
+          n++;
         }
+        return n;
       },
     },
     {
       name: 'GeckoTerminal new pools',
       run: async () => {
+        let n = 0;
         for (const page of [1, 2]) {
           const body = await getJson(`${GECKO}/networks/solana/new_pools?page=${page}`);
-          for (const row of body?.data || []) {
+          for (const row of rowsOf(body)) {
             const id = row?.relationships?.base_token?.data?.id || '';
+            if (!id) continue;
             add(id.replace(/^solana_/, ''), 'gecko-new');
+            n++;
           }
         }
+        return n;
       },
     },
     {
       name: 'GeckoTerminal trending pools',
       run: async () => {
-        const body = await getJson(`${GECKO}/networks/solana/trending_pools?duration=1h`);
-        for (const row of body?.data || []) {
+        let n = 0;
+        for (const row of rowsOf(await getJson(`${GECKO}/networks/solana/trending_pools?duration=1h`))) {
           const id = row?.relationships?.base_token?.data?.id || '';
+          if (!id) continue;
           add(id.replace(/^solana_/, ''), 'gecko-trending');
+          n++;
         }
+        return n;
       },
     },
   ];
 
   const results = await Promise.allSettled(tasks.map((t) => t.run()));
-  results.forEach((r, i) => {
-    if (r.status === 'rejected') {
-      failures.push(tasks[i].name);
-      log(`⚠ ${tasks[i].name} unavailable (${r.reason?.message || 'error'}) — continuing without it`);
-    } else {
-      log(`✓ ${tasks[i].name}`);
-    }
-  });
+  const diagnostics = results.map((r, i) => ({
+    name: tasks[i].name,
+    ok: r.status === 'fulfilled',
+    count: r.status === 'fulfilled' ? r.value : 0,
+    error: r.status === 'rejected' ? (r.reason?.message || 'error') : null,
+  }));
 
-  return { seeds, failures };
+  for (const d of diagnostics) {
+    if (!d.ok) {
+      failures.push(d.name);
+      log(`⚠ ${d.name} unavailable (${d.error}) — continuing without it`);
+    } else if (d.count === 0) {
+      // Reached it, got nothing: either a quiet market or a changed response
+      // shape. Worth surfacing rather than hiding behind a tick.
+      failures.push(`${d.name} (returned nothing)`);
+      log(`⚠ ${d.name} responded but returned 0 Solana tokens`);
+    } else {
+      log(`✓ ${d.name} — ${d.count} tokens`);
+    }
+  }
+
+  return { seeds, failures, diagnostics };
 }
 
 /**
@@ -149,6 +179,36 @@ export async function hydratePairs(addresses, log = () => {}) {
   }
 
   return best;
+}
+
+/**
+ * Current market cap / price for an arbitrary address list — used to grade past
+ * picks. Returns whatever it could get; missing entries just stay ungraded.
+ * @returns {Promise<Map<string, {fdv: number, priceUsd: number}>>}
+ */
+export async function fetchCurrentMarketCaps(addresses) {
+  const out = new Map();
+  const { batchSize } = CONFIG.fetch;
+  for (let i = 0; i < addresses.length; i += batchSize) {
+    const batch = addresses.slice(i, i + batchSize);
+    try {
+      const body = await getJson(`${DEX}/latest/dex/tokens/${batch.join(',')}`);
+      for (const pair of body?.pairs || []) {
+        const addr = pair?.baseToken?.address;
+        if (!addr || !isSolana(pair?.chainId)) continue;
+        const fdv = Number(pair?.fdv ?? pair?.marketCap) || 0;
+        const prev = out.get(addr);
+        // Keep the deepest pool's view, same rule as hydration.
+        const liq = Number(pair?.liquidity?.usd) || 0;
+        if (!prev || liq > prev._liq) {
+          out.set(addr, { fdv, priceUsd: Number(pair?.priceUsd) || 0, _liq: liq });
+        }
+      }
+    } catch {
+      // Ungraded rows are honest; a failed grade must not break the page.
+    }
+  }
+  return out;
 }
 
 /** Best-effort Jupiter verified set. Failure is silent — it is a bonus only. */

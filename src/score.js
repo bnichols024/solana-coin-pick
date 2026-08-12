@@ -77,6 +77,27 @@ export function normalizePair(pair, extra = {}, now = Date.now()) {
 }
 
 /**
+ * Tickers that already belong to something large. A brand-new $200K pair using
+ * one of these is impersonating it — a well-worn way to farm buys from people
+ * who do not check the contract address.
+ */
+const CLAIMED_TICKERS = new Set([
+  'SOL', 'BTC', 'ETH', 'USDC', 'USDT', 'BNB', 'XRP', 'ADA', 'DOGE', 'TRX',
+  'AVAX', 'LINK', 'DOT', 'MATIC', 'SHIB', 'LTC', 'BCH', 'UNI', 'ATOM', 'XLM',
+  'JUP', 'JTO', 'PYTH', 'RAY', 'BONK', 'WIF', 'PEPE', 'POPCAT', 'MEW', 'WEN',
+  'ORCA', 'MSOL', 'JITOSOL', 'WBTC', 'WETH', 'USDS', 'PUMP',
+]);
+
+/** A token is impersonating when it wears a claimed ticker at a tiny cap. */
+export function impersonatesKnownToken(c, maxLegitFdv = 50_000_000) {
+  const sym = String(c.symbol || '').trim().toUpperCase();
+  if (!CLAIMED_TICKERS.has(sym)) return false;
+  // The real one is worth far more than anything that clears our size filters,
+  // so any candidate wearing the ticker at this size is not the real one.
+  return c.fdv > 0 && c.fdv < maxLegitFdv;
+}
+
+/**
  * Hard disqualifiers. Returns an array of human-readable reasons; empty means
  * the candidate is tradeable enough to score.
  */
@@ -110,6 +131,10 @@ export function rejectReasons(c, f = CONFIG.filters) {
   // A pool that already collapsed is not an entry, it is a corpse.
   if (c.chg24h < f.corpseChange24h && c.liquidity < f.corpseLiquidityUsd) {
     out.push('already collapsed — the rug has happened');
+  }
+
+  if (impersonatesKnownToken(c)) {
+    out.push(`"${c.symbol}" is an established ticker — this is an impersonator`);
   }
 
   return out;

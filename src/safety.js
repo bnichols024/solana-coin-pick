@@ -5,6 +5,14 @@
 // that cannot run at all never silently passes it — the coin is marked
 // unverified, penalised, and the gap is shown on the card.
 
+import { cached } from './cache.js';
+
+/**
+ * Contract facts barely change, so cache them hard. This is what keeps the
+ * free public RPCs from rate-limiting us across repeated clicks.
+ */
+const VET_TTL_MS = 15 * 60 * 1000;
+
 const RPC_ENDPOINTS = [
   'https://api.mainnet-beta.solana.com',
   'https://solana-rpc.publicnode.com',
@@ -166,9 +174,11 @@ export function evaluateSafety(results = {}) {
  * an `unverified` entry rather than a silent pass.
  */
 export async function vetToken(address) {
+  // Cache each provider separately: a rate-limited RugCheck should not stop us
+  // reusing a good mint-authority answer, and vice versa.
   const [mintRes, rugRes] = await Promise.allSettled([
-    fetchMintAuthorities(address),
-    fetchRugcheckSummary(address),
+    cached(`mint:${address}`, VET_TTL_MS, () => fetchMintAuthorities(address)),
+    cached(`rug:${address}`, VET_TTL_MS, () => fetchRugcheckSummary(address)),
   ]);
 
   return evaluateSafety({

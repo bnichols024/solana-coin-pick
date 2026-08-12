@@ -1,9 +1,11 @@
 // Orchestration + rendering. Fetch -> normalize -> filter -> score -> show.
 
 import { CONFIG, SCORE_LABELS } from './config.js';
-import { discoverCandidates, hydratePairs, fetchJupiterVerified } from './sources.js';
+import { discoverCandidates, hydratePairs, fetchJupiterVerified, fetchCurrentMarketCaps } from './sources.js';
+import { loadHistory, recordPick, gradeHistory, clearHistory } from './history.js';
 import { normalizePair, rankCandidates } from './score.js';
 import { vetToken } from './safety.js';
+import { vetShortlist } from './select.js';
 import { assessEntry, entryLabel } from './entry.js';
 import { usd, price, pct, age, count, shortAddr } from './format.js';
 
@@ -94,7 +96,7 @@ async function run() {
     // mint authority, freeze authority, LP lock, honeypot patterns — and take
     // the highest-ranked coin that actually survives.
     log('Running contract rug checks on the shortlist…');
-    const { vetted, safeWinner, rejectedForSafety } = await vetShortlist(scored, log);
+    const { vetted, safeWinner, rejectedForSafety } = await vetShortlist(scored, vetToken, log);
 
     if (rejectedForSafety.length) {
       log(`${rejectedForSafety.length} rejected by contract checks: ${
@@ -113,6 +115,16 @@ async function run() {
     renderWinner(safeWinner.entry, safeWinner.safety);
     renderRunnersUp(scored.filter((e) => e !== safeWinner.entry).slice(0, 5), vetted);
     log(`Done in ${((performance.now() - started) / 1000).toFixed(1)}s.`);
+
+    // Record it so the track record can grade this call later.
+    try {
+      recordPick(safeWinner.entry.candidate, safeWinner.entry.score, assessEntry(safeWinner.entry.candidate).state);
+      // Refresh so previously graded rows keep their grades — rendering from an
+      // empty price map would blank them out.
+      renderHistory().catch(() => {});
+    } catch (err) {
+      console.warn('could not record pick', err);
+    }
   } catch (err) {
     console.error(err);
     showNotice('Scan failed', esc(err?.message || 'Unknown error') + ' — try again in a moment.');
@@ -120,37 +132,6 @@ async function run() {
     btn.disabled = false;
     btn.querySelector('.cta-label').textContent = 'Generate Another Winner';
   }
-}
-
-/**
- * Contract-vet the shortlist in small parallel batches, best-scoring first, and
- * stop at the first coin that passes. Returns every vet performed so the
- * runners-up table can show who failed and why.
- */
-async function vetShortlist(scored, logFn) {
-  const { maxVetted, vetConcurrency, unverifiedPenalty } = CONFIG.safety;
-  const shortlist = scored.slice(0, maxVetted);
-  const vetted = new Map(); // entry -> safety result
-  const rejectedForSafety = [];
-  const passes = [];
-
-  for (let i = 0; i < shortlist.length; i += vetConcurrency) {
-    const batch = shortlist.slice(i, i + vetConcurrency);
-    logFn(`Checking contracts: ${batch.map((e) => e.candidate.symbol).join(', ')}…`);
-    const results = await Promise.all(batch.map((e) => vetToken(e.candidate.address)));
-
-    batch.forEach((entry, j) => {
-      const safety = results[j];
-      vetted.set(entry, safety);
-      if (safety.verdict === 'reject') rejectedForSafety.push({ entry, safety });
-      // A coin we could not fully check is worse than one we could. Deducting
-      // here means a slightly lower-scoring but fully-verified coin wins.
-      else passes.push({ entry, safety, effective: entry.score - unverifiedPenalty * safety.unverified.length });
-    });
-  }
-
-  passes.sort((a, b) => b.effective - a.effective);
-  return { vetted, safeWinner: passes[0] || null, rejectedForSafety };
 }
 
 function showNotice(title, body) {
@@ -346,6 +327,69 @@ function renderRunnersUp(list, vetted = new Map()) {
   }).join('');
   runnersEl.hidden = false;
 }
+
+// --- track record ----------------------------------------------------------
+
+const historyEl = $('history');
+
+function multipleClass(m) {
+  if (m == null) return '';
+  if (m >= 1.5) return 'up';
+  if (m <= 0.6) return 'down';
+  return '';
+}
+
+function resultText(row) {
+  if (row.multiple == null) return '<span class="muted">no data</span>';
+  const m = row.multiple;
+  const label = m >= 1 ? `${m.toFixed(2)}x` : `−${((1 - m) * 100).toFixed(0)}%`;
+  return `<span class="${multipleClass(m)}">${label}</span>`;
+}
+
+/** Render the stored picks, grading them against live market caps. */
+async function renderHistory({ refresh = true } = {}) {
+  const stored = loadHistory();
+  if (!stored.length) { historyEl.hidden = true; return; }
+
+  let current = new Map();
+  if (refresh) {
+    try {
+      current = await fetchCurrentMarketCaps(stored.map((p) => p.address));
+    } catch {
+      current = new Map(); // ungraded is fine; never break the page over this
+    }
+  }
+
+  const { rows, stats } = gradeHistory(stored, current);
+
+  $('history-stats').innerHTML = [
+    ['Picks', stats.total],
+    ['Graded', stats.graded],
+    ['Up 1.5x+', stats.wins],
+    ['Down 75%+', stats.rugs],
+    ['Median', stats.median != null ? `${stats.median.toFixed(2)}x` : '—'],
+    ['Best', stats.best != null ? `${stats.best.toFixed(2)}x` : '—'],
+  ].map(([k, v]) => `<div class="hstat"><span class="hstat-k">${esc(k)}</span><span class="hstat-v">${esc(String(v))}</span></div>`).join('');
+
+  historyEl.querySelector('tbody').innerHTML = rows.map((r) => `
+    <tr>
+      <td><a href="https://dexscreener.com/solana/${encodeURIComponent(r.address)}" target="_blank" rel="noopener noreferrer">$${esc(r.symbol)}</a></td>
+      <td>${r.ageMs < 60_000 ? 'just now' : `${age(r.ageMs)} ago`}</td>
+      <td>${usd(r.pickedMc)}</td>
+      <td>${r.nowMc != null ? usd(r.nowMc) : '—'}</td>
+      <td>${resultText(r)}</td>
+    </tr>`).join('');
+
+  historyEl.hidden = false;
+}
+
+$('clear-history').addEventListener('click', () => {
+  clearHistory();
+  historyEl.hidden = true;
+});
+
+// Grade past picks on load, without blocking the button.
+renderHistory().catch((err) => console.warn('history render failed', err));
 
 // Surface the tuning in the console for anyone who wants to poke at it.
 console.info('Moonshot filters/weights:', CONFIG.filters, CONFIG.weights);

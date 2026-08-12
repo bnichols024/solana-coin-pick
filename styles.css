@@ -205,6 +205,38 @@ tbody tr:hover { background: #0c101a; }
 td a { color: var(--text); text-decoration: none; font-weight: 600; }
 td a:hover { color: var(--gold); }
 
+.history { margin-top: 34px; }
+.history-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.history h2 { font-size: 14px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.linkish {
+  background: none; border: 0; color: var(--muted); font-size: 12px;
+  cursor: pointer; text-decoration: underline; padding: 4px;
+}
+.linkish:hover { color: var(--red); }
+.history-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 8px; margin-bottom: 12px;
+}
+.hstat {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 2px;
+}
+.hstat-k { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.hstat-v { font-size: 16px; font-weight: 700; }
+.muted { color: var(--muted); }
+
+/* Visible keyboard focus everywhere, not just where the browser guesses. */
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  .cta:hover:not(:disabled) { transform: none; }
+}
+
 .foot { margin-top: 40px; color: var(--muted); font-size: 13px; text-align: center; }
 .foot strong { color: var(--gold); }
 .tiny { font-size: 11px; opacity: .7; }

@@ -24,8 +24,11 @@ export function pct(n) {
 }
 
 export function age(ms) {
-  if (!ms || !isFinite(ms)) return 'unknown';
+  // Note: 0 is a legitimate age (a pick made a second ago), so test for null
+  // rather than falsiness.
+  if (ms == null || !isFinite(ms) || ms < 0) return 'unknown';
   const mins = ms / 60_000;
+  if (mins < 1) return 'just now';
   if (mins < 60) return `${Math.round(mins)}m`;
   const hours = mins / 60;
   if (hours < 48) return `${hours.toFixed(1)}h`;

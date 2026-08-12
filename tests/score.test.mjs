@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  normalizePair, rejectReasons, rankCandidates, scoreCandidate,
+  normalizePair, rejectReasons, rankCandidates, scoreCandidate, impersonatesKnownToken,
   momentumScore, buyPressureScore, headroomScore, freshnessScore, scale, logScale,
 } from '../src/score.js';
 import { usd, price, pct, age } from '../src/format.js';
@@ -204,6 +204,26 @@ test('honeypot and corpse patterns are filtered from market data alone', () => {
   assert.ok(rejectReasons(corpse).some((r) => /already collapsed/.test(r)));
 });
 
+test('a tiny coin wearing a famous ticker is rejected as an impersonator', () => {
+  for (const symbol of ['SOL', 'usdc', 'Bonk', 'JUP']) {
+    const fake = norm({ ...fx.goodRunner, baseToken: { ...fx.goodRunner.baseToken, symbol } });
+    assert.ok(impersonatesKnownToken(fake), `${symbol} should be flagged`);
+    assert.ok(rejectReasons(fake).some((r) => /impersonator/.test(r)), `${symbol} should be rejected`);
+  }
+});
+
+test('an ordinary meme ticker is not mistaken for an impersonator', () => {
+  for (const symbol of ['GOODDOG', 'FLOKI2', 'MOONCAT', '']) {
+    const ok = norm({ ...fx.goodRunner, baseToken: { ...fx.goodRunner.baseToken, symbol } });
+    assert.equal(impersonatesKnownToken(ok), false, `${symbol} should not be flagged`);
+  }
+});
+
+test('the real large-cap token is not flagged as its own impersonator', () => {
+  const real = norm({ ...fx.goodRunner, baseToken: { ...fx.goodRunner.baseToken, symbol: 'BONK' }, fdv: 900_000_000 });
+  assert.equal(impersonatesKnownToken(real), false);
+});
+
 test('the healthy runner survives the new rug filters', () => {
   assert.deepEqual(rejectReasons(norm(fx.goodRunner)), []);
 });
@@ -291,6 +311,12 @@ test('formatters handle nulls and sub-penny prices', () => {
   assert.equal(pct(12.34), '+12.3%');
   assert.equal(pct(-5), '-5.0%');
   assert.equal(age(90 * 60_000), '1.5h');
+  // 0 is a real age (a pick made a second ago), not missing data.
+  assert.equal(age(0), 'just now');
+  assert.equal(age(30_000), 'just now');
+  assert.equal(age(null), 'unknown');
+  assert.equal(age(undefined), 'unknown');
+  assert.equal(age(-5), 'unknown');
   assert.ok(price(0.00042).startsWith('$0.000'));
   assert.ok(!price(0.00042).includes('e'));
 });
