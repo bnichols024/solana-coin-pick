@@ -7,6 +7,7 @@ import {
 } from '../src/score.js';
 import { usd, price, pct, age } from '../src/format.js';
 import { evaluateSafety, sellSideBlocked } from '../src/safety.js';
+import { assessEntry, capBefore, entryLabel } from '../src/entry.js';
 import * as fx from './fixtures.js';
 
 const norm = (pair, extra = {}) => normalizePair(pair, extra, fx.NOW);
@@ -205,6 +206,82 @@ test('honeypot and corpse patterns are filtered from market data alone', () => {
 
 test('the healthy runner survives the new rug filters', () => {
   assert.deepEqual(rejectReasons(norm(fx.goodRunner)), []);
+});
+
+// --- entry timing ----------------------------------------------------------
+
+const withChange = (over) => norm({ ...fx.goodRunner, ...over });
+
+test('capBefore reconstructs a prior market cap and refuses impossible ones', () => {
+  assert.equal(capBefore(200, 100), 100);        // doubled -> was half
+  assert.equal(capBefore(75, -25), 100);         // down a quarter -> was 100
+  assert.equal(capBefore(100, -99.9), null);     // ratio is meaningless
+  assert.equal(capBefore(0, 50), null);
+});
+
+test('a vertical candle says wait, with a target below the current cap', () => {
+  const e = assessEntry(withChange({ priceChange: { m5: 12, h1: 80, h6: 95, h24: 150 } }));
+  assert.equal(e.state, 'wait_pullback');
+  assert.match(e.verdict, /Wait for the pullback/);
+  assert.ok(e.zoneHigh < fx.goodRunner.fdv, 'target must be below current cap');
+  assert.ok(e.zoneLow < e.zoneHigh, 'zone must be low..high');
+  assert.ok(e.discountPct < 0);
+});
+
+test('a steady climb says buy now and never quotes a target above current', () => {
+  const e = assessEntry(withChange({ priceChange: { m5: 1, h1: 12, h6: 40, h24: 90 } }));
+  assert.equal(e.state, 'buy_now');
+  assert.ok(e.zoneHigh <= fx.goodRunner.fdv);
+  assert.ok(e.maxChase > fx.goodRunner.fdv, 'chase limit sits above current');
+});
+
+test('a hot last hour asks for a shallow dip, shallower than a parabolic one', () => {
+  const stretched = assessEntry(withChange({ priceChange: { m5: 2, h1: 40, h6: 35, h24: 90 } }));
+  const parabolic = assessEntry(withChange({ priceChange: { m5: 12, h1: 80, h6: 95, h24: 150 } }));
+  assert.equal(stretched.state, 'wait_shallow');
+  assert.ok(stretched.discountPct > parabolic.discountPct,
+    'a stretched coin should need a smaller discount than a parabolic one');
+});
+
+test('a bleeding coin is a hard wait, not a dip buy', () => {
+  const e = assessEntry(withChange({ priceChange: { m5: -3, h1: -14, h6: 20, h24: 60 } }));
+  assert.equal(e.state, 'falling');
+  assert.match(e.verdict, /Do not buy yet/);
+  assert.ok(e.zoneHigh < fx.goodRunner.fdv);
+  assert.ok(e.invalidation < e.zoneLow);
+});
+
+test('a quiet coin is flagged as stalled rather than urgent', () => {
+  const e = assessEntry(withChange({
+    priceChange: { m5: 0, h1: 0.5, h6: 30, h24: 80 },
+    volume: { m5: 100, h1: 5_000, h6: 700_000, h24: 1_400_000 },
+  }));
+  assert.equal(e.state, 'stalled');
+  assert.match(e.reason, /six-hour average/);
+});
+
+test('entry levels stay ordered and finite for every state', () => {
+  const cases = [
+    { m5: 12, h1: 80, h6: 95, h24: 150 },
+    { m5: 1, h1: 12, h6: 40, h24: 90 },
+    { m5: 2, h1: 40, h6: 35, h24: 90 },
+    { m5: -3, h1: -14, h6: 20, h24: 60 },
+    { m5: 0, h1: 0, h6: 0, h24: 0 },
+  ];
+  for (const priceChange of cases) {
+    const e = assessEntry(withChange({ priceChange }));
+    assert.ok(Number.isFinite(e.zoneLow) && Number.isFinite(e.zoneHigh), JSON.stringify(priceChange));
+    assert.ok(e.zoneLow <= e.zoneHigh);
+    assert.ok(e.invalidation < e.maxChase);
+    assert.ok(typeof entryLabel(e.state) === 'string' && entryLabel(e.state) !== '—');
+  }
+});
+
+test('missing market cap yields an honest "unclear" rather than a fake level', () => {
+  const e = assessEntry(norm({ ...fx.goodRunner, fdv: 0, marketCap: 0 }));
+  assert.equal(e.state, 'unknown');
+  assert.equal(e.zoneLow, null);
+  assert.equal(e.maxChase, null);
 });
 
 test('formatters handle nulls and sub-penny prices', () => {

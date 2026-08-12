@@ -4,6 +4,7 @@ import { CONFIG, SCORE_LABELS } from './config.js';
 import { discoverCandidates, hydratePairs, fetchJupiterVerified } from './sources.js';
 import { normalizePair, rankCandidates } from './score.js';
 import { vetToken } from './safety.js';
+import { assessEntry, entryLabel } from './entry.js';
 import { usd, price, pct, age, count, shortAddr } from './format.js';
 
 const $ = (id) => document.getElementById(id);
@@ -184,6 +185,40 @@ function renderSafety(safety) {
   return `<h3 class="section">Contract safety</h3><ul class="safety">${rows.join('')}</ul>${banner}`;
 }
 
+function renderEntryTiming(c) {
+  const e = assessEntry(c);
+  const waiting = e.state === 'wait_pullback' || e.state === 'wait_shallow' || e.state === 'falling';
+  const zone = e.zoneLow != null && e.zoneHigh != null
+    ? `${usd(e.zoneLow)} – ${usd(e.zoneHigh)}`
+    : '—';
+  const discount = e.discountPct != null && e.discountPct < -0.5
+    ? ` <span class="muted">(${e.discountPct.toFixed(0)}% below current)</span>`
+    : '';
+
+  return `
+    <div class="entry entry-${esc(e.state)}">
+      <div class="entry-head">
+        <span class="entry-dot"></span>
+        <strong>${esc(e.verdict)}</strong>
+      </div>
+      <p class="entry-reason">${esc(e.reason)}</p>
+      <div class="entry-levels">
+        <div>
+          <span class="entry-k">${waiting ? 'Target entry market cap' : 'Entry zone'}</span>
+          <span class="entry-v">${zone}${discount}</span>
+        </div>
+        <div>
+          <span class="entry-k">Do not chase above</span>
+          <span class="entry-v">${usd(e.maxChase)}</span>
+        </div>
+        <div>
+          <span class="entry-k">Thesis dead below</span>
+          <span class="entry-v">${usd(e.invalidation)}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderWinner(entry, safety) {
   const c = entry.candidate;
   const bars = Object.entries(entry.parts).map(([key, p]) => `
@@ -218,6 +253,8 @@ function renderWinner(entry, safety) {
         <div class="band-value">${esc(entry.upside.band)} potential</div>
         <div class="band-note">${esc(entry.upside.note)}</div>
       </div>
+
+      ${renderEntryTiming(c)}
 
       <div class="stats">
         <div class="stat"><div class="stat-k">Price</div><div class="stat-v">${price(c.priceUsd)}</div></div>
@@ -279,6 +316,16 @@ function safetyCell(safety) {
   return '<td class="up" title="all contract checks passed">✓</td>';
 }
 
+function entryCell(c) {
+  const e = assessEntry(c);
+  const label = entryLabel(e.state);
+  const cls = e.state === 'buy_now' ? 'up' : e.state === 'falling' ? 'down' : 'warn-cell';
+  // For anything worth waiting on, show the level to wait for — a bare
+  // "Wait" is useless without a number attached to it.
+  const target = e.state === 'buy_now' || e.zoneHigh == null ? '' : `<br><span class="tiny">${usd(e.zoneHigh)}</span>`;
+  return `<td class="${cls}" title="${esc(e.verdict)}">${label}${target}</td>`;
+}
+
 function renderRunnersUp(list, vetted = new Map()) {
   if (!list.length) { runnersEl.hidden = true; return; }
   const tbody = $('runners-table').querySelector('tbody');
@@ -289,6 +336,7 @@ function renderRunnersUp(list, vetted = new Map()) {
       <td><a href="${esc(c.url || `https://dexscreener.com/solana/${c.address}`)}" target="_blank" rel="noopener noreferrer" title="${esc(shortAddr(c.address))}">$${esc(c.symbol)}</a></td>
       <td>${e.score}</td>
       ${safetyCell(vetted.get(e))}
+      ${entryCell(c)}
       <td>${usd(c.fdv)}</td>
       <td>${usd(c.liquidity)}</td>
       <td>${chg(c.chg1h)}</td>

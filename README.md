@@ -32,7 +32,7 @@ keeps its deepest pool.
 
 **3 — Filter.** Hard disqualifiers, no scoring mercy — see `src/config.js`:
 
-- liquidity under $15K (you cannot exit) or over $2M (too heavy to 10x in a day)
+- liquidity under $20K (you cannot exit) or over $2M (too heavy to 10x in a day)
 - 24h volume under $50K, or a pool that has not turned over once
 - FDV over $30M — a 100x from there would be a top-20 coin
 - pair younger than 45 minutes (sniper/rug window) or older than 21 days
@@ -79,7 +79,25 @@ The highest-scoring coin is therefore not always the winner — the highest-scor
 that *survives vetting* is. The runners-up table shows ✓ / partial / ✗ for each, so you
 can see the filter working.
 
-**6 — Show.** One winner card with price, cap, liquidity, age, a **"why this one"**
+**6 — Time the entry** (`src/entry.js`). Picking the right coin and picking the right
+moment are different problems — a good coin bought at the top of a vertical candle still
+loses money. Every pick gets an entry verdict:
+
+| Verdict | Trigger | What you get |
+| --- | --- | --- |
+| **Good entry now** | rising steadily, not vertical | entry zone + a chase limit |
+| **Close — wait for a small dip** | most of the 6h move happened this hour | a shallow (23.6–38.2%) retracement target |
+| **Wait for the pullback** | +60% in an hour, or +8% in five minutes | a deeper (38.2–61.8%) retracement target |
+| **Do not buy yet** | down 5%+ on the hour | a level to watch once it bases |
+| **Momentum has gone quiet** | flat hour, volume under 70% of its 6h average | no urgency |
+
+Targets are derived, never invented: the market cap 1h and 6h ago is reconstructed from
+the price changes, the move from that low to now is "the leg", and the entry zone is a
+Fibonacci retracement of that leg. Every card also shows **do not chase above** (+12%)
+and **thesis dead below** (the base of the leg), so you go in with an exit already
+decided. The runners-up table carries the same verdict and target.
+
+**7 — Show.** One winner card with price, cap, liquidity, age, a **"why this one"**
 breakdown of every score component, an honest upside band, the contract address with a
 copy button, and links to Jupiter / DexScreener / Birdeye / RugCheck. Top-5 runners-up
 below it.
@@ -125,8 +143,8 @@ Everything worth changing lives in `src/config.js` — the filter thresholds and
 scoring weights. Want more aggressive picks? Drop `maxFdvUsd` to `5_000_000` and raise
 the `momentum` weight. Want safer ones? Raise `minLiquidityUsd`.
 
-`npm test` covers the filters, each signal, ranking, the contract-safety verdicts and the
-malformed-data path (22 tests), so you can retune with a safety net.
+`npm test` covers the filters, each scoring signal, ranking, the contract-safety verdicts,
+entry timing and the malformed-data path (30 tests), so you can retune with a safety net.
 
 `CONFIG.safety` controls the vetting: `maxVetted` (how many to contract-check per click),
 `vetConcurrency`, and `unverifiedPenalty`.
@@ -150,6 +168,7 @@ styles.css        dark terminal styling
 src/config.js     filters, weights, safety settings, optional paid keys
 src/sources.js    fail-soft market-data clients
 src/safety.js     contract rug checks (RPC mint authority + RugCheck)
+src/entry.js      entry timing and retracement targets
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
