@@ -31,6 +31,23 @@ function esc(s) {
   ));
 }
 
+/**
+ * URLs come from third-party APIs and end up in href/src. Escaping quotes is
+ * not enough — `javascript:` and `data:` URLs survive it — so anything that is
+ * not plain https is replaced with the caller's fallback.
+ */
+function safeUrl(raw, fallback = '') {
+  if (typeof raw !== 'string' || !raw.trim()) return fallback;
+  try {
+    // No base URL on purpose: a relative or junk string must fail here rather
+    // than silently resolving against our own origin.
+    const u = new URL(raw.trim());
+    return u.protocol === 'https:' ? u.href : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 btn.addEventListener('click', run);
 
 async function run() {
@@ -227,7 +244,7 @@ function renderWinner(entry, safety, { live = false } = {}) {
   resultEl.innerHTML = `
     <div class="card">
       <div class="card-top">
-        ${c.icon ? `<img class="token-icon" src="${esc(c.icon)}" alt="" onerror="this.remove()" />` : ''}
+        ${safeUrl(c.icon) ? `<img class="token-icon" src="${esc(safeUrl(c.icon))}" alt="" onerror="this.remove()" />` : ''}
         <div class="token-id">
           <p class="ticker">$${esc(c.symbol)}</p>
           <p class="token-name">${esc(c.name)}</p>
@@ -278,7 +295,7 @@ function renderWinner(entry, safety, { live = false } = {}) {
 
       <div class="links">
         <a class="primary" href="https://jup.ag/swap/SOL-${encodeURIComponent(c.address)}" target="_blank" rel="noopener noreferrer">Buy on Jupiter</a>
-        <a href="${esc(c.url || `https://dexscreener.com/solana/${c.address}`)}" target="_blank" rel="noopener noreferrer">DexScreener chart</a>
+        <a href="${esc(safeUrl(c.url, `https://dexscreener.com/solana/${encodeURIComponent(c.address)}`))}" target="_blank" rel="noopener noreferrer">DexScreener chart</a>
         <a href="https://birdeye.so/token/${encodeURIComponent(c.address)}?chain=solana" target="_blank" rel="noopener noreferrer">Birdeye</a>
         <a href="https://rugcheck.xyz/tokens/${encodeURIComponent(c.address)}" target="_blank" rel="noopener noreferrer">RugCheck</a>
       </div>
@@ -327,7 +344,7 @@ function renderRunnersUp(list, vetted = new Map()) {
     const c = e.candidate;
     return `<tr>
       <td>${i + 2}</td>
-      <td><a href="${esc(c.url || `https://dexscreener.com/solana/${c.address}`)}" target="_blank" rel="noopener noreferrer" title="${esc(shortAddr(c.address))}">$${esc(c.symbol)}</a></td>
+      <td><a href="${esc(safeUrl(c.url, `https://dexscreener.com/solana/${encodeURIComponent(c.address)}`))}" target="_blank" rel="noopener noreferrer" title="${esc(shortAddr(c.address))}">$${esc(c.symbol)}</a></td>
       <td>${e.score}</td>
       ${safetyCell(vetted.get(e))}
       ${entryCell(c)}

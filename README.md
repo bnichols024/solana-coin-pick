@@ -100,10 +100,27 @@ decided. The runners-up table carries the same verdict and target.
 **7 — Show.** One winner card with price, cap, liquidity, age, a **"why this one"**
 breakdown of every score component, an honest upside band, the contract address with a
 copy button, and links to Jupiter / DexScreener / Birdeye / RugCheck. Top-5 runners-up
-below it.
+below it, each with its own safety and entry verdict.
+
+The card **refreshes itself every 45 seconds** — market cap and the price-change window
+move together, so the entry levels stay derived from current data rather than from
+whenever you happened to click. It pauses on a hidden tab and keeps its last good values
+if a refresh fails.
+
+Everything rejected is listed in an **expandable audit panel**, grouped by reason with
+the tickers, contract failures first. The filters are the most opinionated part of the
+app, so they are auditable rather than taken on trust.
 
 If the whole field fails the filters, it says so instead of inventing a pick. If a feed
-is down, it says which one and scores on the rest.
+is down, it says which one and scores on the rest — and a source that responds but
+returns zero tokens is reported too, so a changed API shape cannot hide behind a tick.
+
+## Track record
+
+Every pick is stored in your browser with the market cap at the time, and re-graded
+against live data whenever you open the page: median result, best, how many went up
+1.5x+, and how many lost 75%+. Nothing leaves the device and nothing is cleaned up to
+look good — if the picks are bad, the table says so. There is a Clear button.
 
 ---
 
@@ -113,7 +130,7 @@ is down, it says which one and scores on the rest.
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # scoring engine unit tests
+npm test           # 79 tests
 ```
 
 **Docker / Unraid**
@@ -137,6 +154,26 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ---
 
+## Testing
+
+79 tests, run on every push before deploy:
+
+```bash
+npm test
+```
+
+Beyond the unit tests, the suite includes **property tests** that throw thousands of
+random and deliberately hostile candidates at the model and assert invariants — scores
+finite and in range, entry levels correctly ordered, never advising entry above the
+current cap, no NaN reaching a formatter. That fuzzing found three real crash paths on
+its first run, all reachable from live API data.
+
+There are also **packaging guards**: every module must be imported, referenced by
+`index.html`, copied by the `Dockerfile` and staged by the Pages workflow, with no bare
+imports and no committed keys. Removing a copy step fails the suite. And **sanitiser
+tests** pin the two defences against third-party strings — HTML escaping for text, an
+https-only allowlist for anything reaching an `href` or `src`.
+
 ## Tuning it
 
 Everything worth changing lives in `src/config.js` — the filter thresholds and the
@@ -148,6 +185,10 @@ entry timing and the malformed-data path (30 tests), so you can retune with a sa
 
 `CONFIG.safety` controls the vetting: `maxVetted` (how many to contract-check per click),
 `vetConcurrency`, and `unverifiedPenalty`.
+
+Contract results are cached for 15 minutes in `localStorage`, and vetting stops at the
+first fully verified coin, which together keep the free public RPCs from rate-limiting
+repeated clicks.
 
 ## v2 — paid signals
 
@@ -169,9 +210,12 @@ src/config.js     filters, weights, safety settings, optional paid keys
 src/sources.js    fail-soft market-data clients
 src/safety.js     contract rug checks (RPC mint authority + RugCheck)
 src/entry.js      entry timing and retracement targets
+src/select.js     winner selection over the vetted shortlist
+src/cache.js      TTL cache (localStorage, memory fallback)
+src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            node --test suite over the scoring engine
+tests/            79 tests: unit, property/fuzz, packaging and sanitiser
 Dockerfile        nginx:alpine static image
 ```
