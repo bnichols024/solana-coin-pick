@@ -161,7 +161,7 @@ actually calls. A test asserts the policy stays in sync with the code.
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # 121 tests
+npm test           # 124 tests
 ```
 
 **Docker / Unraid**
@@ -187,7 +187,7 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ## Testing
 
-121 tests, run on every push before deploy:
+124 tests, run on every push before deploy:
 
 ```bash
 npm test
@@ -205,7 +205,11 @@ Token-2022 extension parsing.
 
 There are also **packaging guards**: every module must be imported, referenced by
 `index.html`, copied by the `Dockerfile` and staged by the Pages workflow, with no bare
-imports and no committed keys. Removing a copy step fails the suite. And **sanitiser
+imports and no committed keys. Removing a copy step fails the suite. The nginx container is the one deployment path
+these tests cannot execute, so its config is checked structurally instead — balanced
+braces, the listen port matching the Dockerfile, the root matching the COPY target, and
+every MIME type the app serves being present in the redefined types block (a wrong one
+there means the browser refuses every ES module and the page renders nothing). And **sanitiser
 tests** pin the two defences against third-party strings — HTML escaping for text, an
 https-only allowlist for anything reaching an `href` or `src`.
 
@@ -251,6 +255,6 @@ src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            121 tests: unit, network, property/fuzz, packaging, sanitiser
+tests/            124 tests: unit, network, property/fuzz, packaging, sanitiser
 Dockerfile        nginx:alpine static image
 ```

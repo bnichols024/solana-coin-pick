@@ -124,3 +124,42 @@ test('the CSP allows exactly the hosts the code calls, and no more', () => {
   assert.ok(!/connect-src[^;]*\*/.test(csp[1]), 'connect-src must not use a wildcard');
   assert.match(csp[1], /default-src\s+'none'/, 'default-src should deny by default');
 });
+
+test('nginx.conf is structurally sound and serves the app correctly', () => {
+  const conf = read('nginx.conf');
+  // There is no nginx binary in CI to -t this against, and the container is the
+  // one deployment path that cannot be exercised by these tests, so check the
+  // things that would break it silently.
+  assert.equal(
+    (conf.match(/\{/g) || []).length,
+    (conf.match(/\}/g) || []).length,
+    'unbalanced braces would stop nginx from starting',
+  );
+  assert.match(conf, /listen\s+80;/, 'must listen on the port the Dockerfile exposes');
+  assert.match(conf, /root\s+\/usr\/share\/nginx\/html;/, 'root must match the Dockerfile COPY target');
+  assert.match(conf, /index\s+index\.html;/);
+  // A redefined types block replaces the default MIME map entirely, so every
+  // type the app actually serves has to be listed.
+  const types = conf.match(/types\s*\{([^}]+)\}/s);
+  assert.ok(types, 'types block not found');
+  for (const [ext, type] of [['html', 'text/html'], ['css', 'text/css'], ['js', 'application/javascript']]) {
+    assert.ok(
+      new RegExp(`${type}\\s+[^;]*\\b${ext}\\b`).test(types[1]),
+      `types block does not map .${ext} to ${type}`,
+    );
+  }
+  assert.match(conf, /try_files/, 'needs a try_files fallback');
+});
+
+test('the Dockerfile exposes the port nginx listens on', () => {
+  assert.match(dockerfile, /EXPOSE\s+80/);
+  assert.match(dockerfile, /FROM\s+nginx:/, 'expected an nginx base image');
+  // COPY targets must line up with the root in nginx.conf.
+  assert.match(dockerfile, /\/usr\/share\/nginx\/html/);
+});
+
+test('docker-compose maps a host port to the container port', () => {
+  const compose = read('docker-compose.yml');
+  assert.match(compose, /"\d+:80"/, 'compose must publish container port 80');
+  assert.match(compose, /restart:\s*unless-stopped/, 'an Unraid container should come back after a reboot');
+});
