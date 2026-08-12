@@ -153,3 +153,62 @@ test('loadHistory ignores corrupt storage instead of throwing', () => {
   globalThis.localStorage.setItem('scp:history', 'not json at all');
   assert.deepEqual(loadHistory(), []);
 });
+
+// --- calibration -----------------------------------------------------------
+
+const { calibration } = await import('../src/history.js');
+
+const graded = (score, multiple) => ({ score, multiple, address: `a${score}${multiple}` });
+
+test('calibration stays hidden until there is enough data to mean anything', () => {
+  const few = Array.from({ length: 5 }, (_, i) => graded(80, 1 + i));
+  const cal = calibration(few);
+  assert.equal(cal.ready, false);
+  assert.equal(cal.needed, 3);
+  assert.deepEqual(cal.buckets, []);
+});
+
+test('calibration ignores ungraded rows when counting', () => {
+  const rows = [...Array.from({ length: 6 }, () => graded(80, 2)), { score: 80, multiple: null }, { score: 80, multiple: null }];
+  assert.equal(calibration(rows).ready, false, 'only graded picks count toward the threshold');
+});
+
+test('calibration reports the median multiple per score band', () => {
+  const rows = [
+    graded(90, 3), graded(80, 5), graded(75, 1),          // 70+ -> median 3
+    graded(60, 2), graded(58, 1), graded(56, 1.5),        // 55-70 -> median 1.5
+    graded(40, 0.5), graded(30, 0.1), graded(20, 0.3),    // under 55 -> median 0.3
+  ];
+  const cal = calibration(rows);
+  assert.equal(cal.ready, true);
+  const byLabel = Object.fromEntries(cal.buckets.map((b) => [b.label, b]));
+  assert.equal(byLabel['70+'].median, 3);
+  assert.equal(byLabel['70+'].n, 3);
+  assert.equal(byLabel['55–70'].median, 1.5);
+  assert.equal(byLabel['under 55'].median, 0.3);
+});
+
+test('calibration says so when the model is holding up', () => {
+  const rows = [
+    graded(90, 4), graded(85, 3), graded(80, 5),
+    graded(60, 1.2), graded(58, 1.1), graded(56, 1.3),
+    graded(40, 0.4), graded(30, 0.2), graded(20, 0.5),
+  ];
+  assert.match(calibration(rows).verdict, /holding up/);
+});
+
+test('calibration says so when high scores are doing worse', () => {
+  const rows = [
+    graded(90, 0.2), graded(85, 0.1), graded(80, 0.3),
+    graded(60, 2), graded(58, 3), graded(56, 2.5),
+    graded(40, 1.8), graded(30, 1.9), graded(20, 2.1),
+  ];
+  assert.match(calibration(rows).verdict, /suspicion/, 'the app must be willing to say it is wrong');
+});
+
+test('calibration drops empty bands rather than showing dashes', () => {
+  const rows = Array.from({ length: 9 }, (_, i) => graded(90 - i * 0.1, 2));
+  const cal = calibration(rows);
+  assert.equal(cal.buckets.length, 1, 'only the populated band appears');
+  assert.equal(cal.buckets[0].label, '70+');
+});

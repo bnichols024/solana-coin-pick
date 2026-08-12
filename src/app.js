@@ -2,7 +2,7 @@
 
 import { CONFIG, SCORE_LABELS, resolvePreset } from './config.js';
 import { discoverCandidates, hydratePairs, fetchJupiterVerified, fetchCurrentMarketCaps } from './sources.js';
-import { loadHistory, recordPick, gradeHistory, clearHistory } from './history.js';
+import { loadHistory, recordPick, gradeHistory, clearHistory, calibration } from './history.js';
 import { normalizePair, rankCandidates } from './score.js';
 import { vetToken } from './safety.js';
 import { vetShortlist } from './select.js';
@@ -515,6 +515,8 @@ async function renderHistory({ refresh = true } = {}) {
     ['Best', stats.best != null ? `${stats.best.toFixed(2)}x` : '—'],
   ].map(([k, v]) => `<div class="hstat"><span class="hstat-k">${esc(k)}</span><span class="hstat-v">${esc(String(v))}</span></div>`).join('');
 
+  renderCalibration(rows);
+
   historyEl.querySelector('tbody').innerHTML = rows.map((r) => `
     <tr>
       <td><a href="https://dexscreener.com/solana/${encodeURIComponent(r.address)}" target="_blank" rel="noopener noreferrer">$${esc(r.symbol)}</a></td>
@@ -528,9 +530,28 @@ async function renderHistory({ refresh = true } = {}) {
   historyEl.hidden = false;
 }
 
+/** Show whether the score has actually predicted anything, once there is data. */
+function renderCalibration(rows) {
+  const el = $('calibration');
+  const cal = calibration(rows);
+  if (!cal.ready) { el.hidden = true; return; }
+
+  el.innerHTML = `
+    <div class="cal-head">Is the score predictive?</div>
+    <div class="cal-bands">${cal.buckets.map((b) => `
+      <div class="cal-band">
+        <span class="cal-label">Score ${esc(b.label)}</span>
+        <span class="cal-median ${b.median >= 1 ? 'up' : 'down'}">${b.median != null ? `${b.median.toFixed(2)}x` : '—'}</span>
+        <span class="cal-n">${b.n} pick${b.n === 1 ? '' : 's'}</span>
+      </div>`).join('')}</div>
+    <p class="cal-verdict">${esc(cal.verdict)}</p>`;
+  el.hidden = false;
+}
+
 $('clear-history').addEventListener('click', () => {
   clearHistory();
   historyEl.hidden = true;
+  $('calibration').hidden = true;
 });
 
 // Grade past picks on load, without blocking the button.

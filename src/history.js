@@ -110,6 +110,57 @@ export function gradeHistory(history, current, now = Date.now()) {
   };
 }
 
+/**
+ * Does a higher score actually predict a better outcome? Buckets graded picks
+ * by the score they were given and reports the median multiple of each.
+ *
+ * This is the app marking its own homework in public. With a handful of picks
+ * it means nothing, which is why it stays hidden until there are enough.
+ */
+export function calibration(rows, minGraded = 8) {
+  const graded = rows.filter((r) => r.multiple != null);
+  if (graded.length < minGraded) {
+    return { ready: false, needed: minGraded - graded.length, buckets: [], verdict: null };
+  }
+
+  const bands = [
+    { label: '70+', min: 70, max: Infinity },
+    { label: '55–70', min: 55, max: 70 },
+    { label: 'under 55', min: -Infinity, max: 55 },
+  ];
+
+  const median = (nums) => {
+    if (!nums.length) return null;
+    const s = [...nums].sort((a, b) => a - b);
+    const mid = s.length / 2;
+    return s.length % 2 ? s[(s.length - 1) / 2] : (s[mid - 1] + s[mid]) / 2;
+  };
+
+  const buckets = bands.map((b) => {
+    const inBand = graded.filter((r) => Number(r.score) >= b.min && Number(r.score) < b.max);
+    return {
+      label: b.label,
+      n: inBand.length,
+      median: median(inBand.map((r) => r.multiple)),
+    };
+  }).filter((b) => b.n > 0);
+
+  // Is the ordering the model claims actually present in the results?
+  const ranked = buckets.filter((b) => b.median != null);
+  let verdict = 'not enough spread to tell';
+  if (ranked.length >= 2) {
+    const top = ranked[0];
+    const rest = ranked.slice(1);
+    const beatsAll = rest.every((b) => top.median >= b.median);
+    const losesToAll = rest.every((b) => top.median < b.median);
+    if (beatsAll) verdict = 'higher scores are doing better — the model is holding up';
+    else if (losesToAll) verdict = 'higher scores are doing worse — treat the score with suspicion';
+    else verdict = 'mixed — no clear relationship between score and outcome yet';
+  }
+
+  return { ready: true, needed: 0, buckets, verdict };
+}
+
 export function clearHistory() {
   const s = store();
   if (!s) return;
