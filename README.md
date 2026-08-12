@@ -52,7 +52,7 @@ wildly lopsided buy/sell ratio (sell tax), or a pool already down 60%+ on thin l
 | Volume velocity | 15% | 1h volume against liquidity — pool turns per hour |
 | Paid attention | 15% | Boost spend, profile, socials, corroborating sources |
 | Upside headroom | 15% | Log-inverse FDV — small cap, room to run |
-| Freshness | 10% | Sweet spot is a 2–72h old pair |
+| Freshness | 10% | Sweet spot runs to 72h, or halfway through a preset's shorter age window |
 
 Then risk deductions: thin float vs market cap, shallow liquidity, red hour, sellers
 outnumbering buyers.
@@ -117,7 +117,7 @@ returns zero tokens is reported too, so a changed API shape cannot hide behind a
 
 ## Risk presets
 
-Three profiles above the button, remembered between visits:
+Four profiles above the button, remembered between visits:
 
 | Preset | What changes |
 | --- | --- |
