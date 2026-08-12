@@ -103,8 +103,22 @@ async function run() {
 
     // Deepest-boosted and most-corroborated seeds first, so the batch cap
     // spends its budget on the most promising addresses.
+    //
+    // Except when the preset hunts brand-new launches: a coin twenty minutes
+    // old appears in exactly one feed (new pools) with no paid promotion, so
+    // the usual ranking buries it below the hydration cap and the tier would
+    // never see the very coins it exists to find. Freshly-listed pools go
+    // first in that case.
+    const prefersFresh = activePreset.filters.maxPairAgeDays <= 1;
+    const freshness = (seed) => (seed.sources.includes('gecko-new') ? 1 : 0);
     const addresses = [...seeds.entries()]
-      .sort((a, b) => (b[1].sources.length - a[1].sources.length) || (b[1].boostAmount - a[1].boostAmount))
+      .sort((a, b) => {
+        if (prefersFresh) {
+          const byFresh = freshness(b[1]) - freshness(a[1]);
+          if (byFresh) return byFresh;
+        }
+        return (b[1].sources.length - a[1].sources.length) || (b[1].boostAmount - a[1].boostAmount);
+      })
       .map(([addr]) => addr);
 
     const pairs = await hydratePairs(addresses, (m) => log(m, m.startsWith('⚠') ? 'warn' : ''));

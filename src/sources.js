@@ -95,7 +95,9 @@ export async function discoverCandidates(log = () => {}) {
       name: 'GeckoTerminal new pools',
       run: async () => {
         let n = 0;
-        for (const page of [1, 2]) {
+        // Three pages rather than two: on a one-hour window this is the only
+        // feed that will have anything, and Solana launches fast.
+        for (const page of [1, 2, 3]) {
           const body = await getJson(`${GECKO}/networks/solana/new_pools?page=${page}`);
           for (const row of rowsOf(body)) {
             const id = row?.relationships?.base_token?.data?.id || '';

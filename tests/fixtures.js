@@ -3,6 +3,7 @@
 
 export const NOW = 1_760_000_000_000;
 const hoursAgo = (h) => NOW - h * 3_600_000;
+const minutesAgo = (m) => NOW - m * 60_000;
 
 /** A strong, believable runner: small cap, accelerating, buyers dominant. */
 export const goodRunner = {
@@ -94,7 +95,7 @@ export const deadPool = {
   },
 };
 
-/** A believable Gamble-tier launch: tiny cap, thin pool, hours old. */
+/** A believable Gamble-tier launch: tiny cap, thin pool, minutes old. */
 export const microLaunch = {
   chainId: 'solana',
   dexId: 'raydium',
@@ -113,6 +114,6 @@ export const microLaunch = {
   liquidity: { usd: 9_000 },
   fdv: 32_000,
   marketCap: 32_000,
-  pairCreatedAt: hoursAgo(5),
+  pairCreatedAt: minutesAgo(25),
   info: { socials: [{ type: 'twitter' }] },
 };

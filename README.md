@@ -124,13 +124,27 @@ Four profiles above the button, remembered between visits:
 | **Cautious** | $60K+ liquidity, cap ceiling $15M, 600+ trades, 3h+ old; weights favour buy pressure and staying power |
 | **Balanced** | The shipped defaults |
 | **Degen** | $15K+ liquidity, cap ceiling $4M, 200+ trades, 1h+ old; weights favour momentum and headroom |
-| **Gamble** | Cap ceiling **$50K**, $3K+ liquidity, 50+ trades, 20min–3 days old. Brand-new lottery tickets — expect most to go to zero |
+| **Gamble** | Cap ceiling **$50K**, $3K+ liquidity, 25+ trades, **15–60 minutes old**. Brand-new lottery tickets — expect most to go to zero |
 
 **Gamble** is an order of magnitude below the others on every floor, because a $50K coin
-cannot clear thresholds written for a $1M one. Two scoring signals had to be reworked to
-support it: headroom scaled from a fixed $50K floor, which collapsed to a constant
-against a $50K ceiling, and freshness assumed a 72-hour sweet spot, which called an
-entire 3-day window equally fresh. Both now scale to the active ceiling.
+minutes off the launchpad cannot clear thresholds written for an established $1M one.
+Three things had to change under the hood to make the tier work at all:
+
+- **Headroom** scaled from a fixed $50K floor, which collapses to a constant against a
+  $50K ceiling — every gamble coin scoring an identical, meaningless 1.
+- **Freshness** ramped up over the first two hours, on the assumption that a brand-new
+  pair is unproven. In a one-hour window that scored *every* candidate zero and ranked
+  the oldest one highest. Both boundaries now scale to the allowed window, so inside an
+  hour younger genuinely wins.
+- **Seed ordering** ranked candidates by corroborating feeds and paid promotion. A coin
+  twenty minutes old appears in exactly one feed with no promotion, so it sorted below
+  the hydration cap and was never even priced. Fresh-hunting presets now put newly
+  listed pools first — without this the tier returns nothing no matter how the filters
+  are set.
+
+Volume and trade floors are also lower than raw numbers suggest they should be: those
+counters are 24-hour totals, but nothing in this tier is more than an hour old, so they
+are really whole-life numbers.
 
 The contract rug checks are identical in all four — appetite changes which coins are
 considered, never whether they are vetted. Gamble picks still get mint authority, freeze
@@ -170,7 +184,7 @@ actually calls. A test asserts the policy stays in sync with the code.
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # 131 tests
+npm test           # 133 tests
 ```
 
 **Docker / Unraid**
@@ -196,7 +210,7 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ## Testing
 
-131 tests, run on every push before deploy:
+133 tests, run on every push before deploy:
 
 ```bash
 npm test
@@ -264,6 +278,6 @@ src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            131 tests: unit, network, property/fuzz, packaging, sanitiser
+tests/            133 tests: unit, network, property/fuzz, packaging, sanitiser
 Dockerfile        nginx:alpine static image
 ```

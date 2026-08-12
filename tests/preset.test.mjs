@@ -131,16 +131,42 @@ test('headroom discriminates inside the gamble tier', () => {
   assert.ok(nearCap.parts.headroom.raw < 0.2, 'a coin at the ceiling has almost none');
 });
 
-test('gamble freshness peaks earlier than the wider presets', () => {
+test('inside a one-hour window, younger scores higher on freshness', () => {
+  // The old fixed 2h ramp scored every sub-hour coin zero and ranked the
+  // oldest one highest — exactly backwards for this tier.
   const g = resolvePreset('gamble');
-  // A 3-day window puts the sweet spot at 0-36h, then decays to 72h.
-  const at12h = rankCandidates([norm({ ...fx.microLaunch, pairCreatedAt: fx.NOW - 12 * 3600e3 })], g).scored[0];
-  const at50h = rankCandidates([norm({ ...fx.microLaunch, pairCreatedAt: fx.NOW - 50 * 3600e3 })], g).scored[0];
-  assert.equal(at12h.parts.freshness.raw, 1, '12h is inside the sweet spot');
-  assert.ok(at50h.parts.freshness.raw < 1, '50h is past it and should decay');
-  // The wider presets treat both as equally fresh, which is the difference.
+  const at = (mins) => rankCandidates(
+    [norm({ ...fx.microLaunch, pairCreatedAt: fx.NOW - mins * 60_000 })], g,
+  ).scored[0];
+
+  const young = at(25);
+  const middling = at(40);
+  const nearlyStale = at(55);
+  assert.ok(young && middling && nearlyStale, 'all three should clear the filters');
+  assert.equal(young.parts.freshness.raw, 1, '25 minutes old is the sweet spot');
+  assert.ok(middling.parts.freshness.raw < young.parts.freshness.raw);
+  assert.ok(nearlyStale.parts.freshness.raw < middling.parts.freshness.raw);
+  assert.ok(nearlyStale.parts.freshness.raw < 0.25, 'almost an hour old is nearly spent');
+});
+
+test('the one-hour window does not disturb the wider presets', () => {
   const balanced = resolvePreset('balanced');
-  assert.equal(rankCandidates([norm({ ...fx.goodRunner, pairCreatedAt: fx.NOW - 50 * 3600e3 })], balanced).scored[0].parts.freshness.raw, 1);
+  const fresh = rankCandidates([norm({ ...fx.goodRunner, pairCreatedAt: fx.NOW - 12 * 3600e3 })], balanced).scored[0];
+  const older = rankCandidates([norm({ ...fx.goodRunner, pairCreatedAt: fx.NOW - 50 * 3600e3 })], balanced).scored[0];
+  assert.equal(fresh.parts.freshness.raw, 1);
+  assert.equal(older.parts.freshness.raw, 1, 'a 21-day window still treats both as fresh');
+});
+
+test('gamble rejects anything over an hour old', () => {
+  const g = resolvePreset('gamble');
+  const twoHours = norm({ ...fx.microLaunch, pairCreatedAt: fx.NOW - 120 * 60_000 });
+  const { scored, rejected } = rankCandidates([twoHours], g);
+  assert.equal(scored.length, 0, 'two hours is not fresh');
+  assert.ok(rejected[0].reasons.some((r) => /no longer a fresh launch/.test(r)));
+
+  const tooNew = norm({ ...fx.microLaunch, pairCreatedAt: fx.NOW - 5 * 60_000 });
+  assert.ok(rankCandidates([tooNew], g).rejected[0].reasons.some((r) => /sniper/.test(r)),
+    'the sniper-window floor still applies');
 });
 
 test('scale and logScale survive a degenerate range instead of going constant', () => {

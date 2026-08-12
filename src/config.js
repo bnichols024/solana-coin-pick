@@ -58,6 +58,9 @@ export const CONFIG = {
   },
 };
 
+/** Pair-age filters are expressed in days; this keeps short windows readable. */
+const minutes = (m) => m / 1440;
+
 /**
  * Risk presets. Same engine, different appetite — these override the defaults
  * above rather than replacing them, so a preset only states what it changes.
@@ -95,7 +98,7 @@ export const PRESETS = {
   },
   gamble: {
     label: 'Gamble',
-    blurb: 'Brand-new sub-$50K launches. Lottery tickets — expect most of these to go to zero.',
+    blurb: 'Sub-$50K coins launched in the last hour. Lottery tickets — expect most of these to go to zero.',
     danger: true,
     filters: {
       // Everything here is an order of magnitude below the other presets,
@@ -103,11 +106,14 @@ export const PRESETS = {
       maxFdvUsd: 50_000,
       maxLiquidityUsd: 150_000,  // more liquidity than cap is a data anomaly
       minLiquidityUsd: 3_000,    // under this you cannot get out at any price
-      minVolume24hUsd: 8_000,
       minVolumeToLiquidity: 0.5,
-      minTxns24h: 50,
-      minPairAgeMinutes: 20,     // still past the instant-rug window
-      maxPairAgeDays: 3,         // brand new only
+      minPairAgeMinutes: 15,     // still past the worst of the sniper window
+      maxPairAgeDays: minutes(60),
+      // DexScreener's volume and trade counts are 24-hour totals, but nothing
+      // here is more than an hour old, so these are really "in its whole life"
+      // numbers. The absolute bar has to drop to stay equivalent.
+      minVolume24hUsd: 4_000,
+      minTxns24h: 25,
       minAvgTradeUsd: 1,
       maxAvgTradeUsd: 3_000,     // at this size a $3K trade is one whale
       corpseLiquidityUsd: 25_000,

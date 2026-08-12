@@ -203,14 +203,18 @@ export function headroomScore(c, filters = CONFIG.filters) {
 export function freshnessScore(c, filters = CONFIG.filters) {
   if (c.ageMs == null) return 0;
   const maxHours = filters.maxPairAgeDays * 24;
-  // The sweet spot ends halfway through the allowed window, capped at 72h, so
-  // a preset hunting fresh launches peaks earlier instead of calling its whole
-  // range equally fresh.
-  const sweetEnd = Math.min(72, maxHours / 2);
   const h = c.ageMs / 3_600_000;
-  if (h < 2) return scale(h, 0.75, 2);                 // ramping in
-  if (h <= sweetEnd) return 1;                         // sweet spot
-  return clamp01(1 - scale(h, sweetEnd, maxHours));    // decaying out
+
+  // Both boundaries scale to the allowed window. On a three-week window a
+  // minutes-old pair is unproven and should ramp up; on a one-hour window
+  // newest is the entire point, and a fixed 2h ramp would score every
+  // candidate zero while ranking the oldest one highest.
+  const rampEnd = Math.min(2, maxHours * 0.25);
+  const sweetEnd = Math.min(72, maxHours / 2);
+
+  if (h < rampEnd) return scale(h, rampEnd * 0.375, rampEnd);  // ramping in
+  if (h <= sweetEnd) return 1;                                 // sweet spot
+  return clamp01(1 - scale(h, sweetEnd, maxHours));            // decaying out
 }
 
 const SIGNALS = {
