@@ -237,18 +237,24 @@ export async function fetchCurrentMarketCaps(addresses) {
  * missing exit signal; one that only ever went down is a bad pick. "Market cap
  * now" cannot tell those apart and they need opposite fixes.
  *
- * @returns {Promise<number|null>} peak price in USD, or null if unavailable
+ * @returns {Promise<{peak: number|null, reason: string|null}>} reason names the
+ *   failure so a missing column can be explained instead of shrugged at.
  */
 export async function fetchPeakSince(poolAddress, sinceMs, now = Date.now()) {
-  if (!poolAddress || !(sinceMs > 0)) return null;
+  if (!poolAddress || !(sinceMs > 0)) return { peak: null, reason: 'no pool address' };
   const ageHours = (now - sinceMs) / 3_600_000;
   // Hourly candles are too coarse for a pick made minutes ago.
   const timeframe = ageHours <= 6 ? 'minute?aggregate=5&limit=200' : 'hour?aggregate=1&limit=168';
 
   try {
-    const body = await getJson(`${GECKO}/networks/solana/pools/${poolAddress}/ohlcv/${timeframe}`);
+    // No retry: these run one per tracked pick, and retrying a rate-limited
+    // call just doubles the load that caused the rate limit.
+    const body = await getJson(
+      `${GECKO}/networks/solana/pools/${poolAddress}/ohlcv/${timeframe}`,
+      { timeoutMs: CONFIG.fetch.timeoutMs, retries: 0 },
+    );
     const candles = body?.data?.attributes?.ohlcv_list;
-    if (!Array.isArray(candles) || !candles.length) return null;
+    if (!Array.isArray(candles) || !candles.length) return { peak: null, reason: 'no price history' };
 
     const sinceSec = sinceMs / 1000;
     let peak = null;
@@ -261,9 +267,10 @@ export async function fetchPeakSince(poolAddress, sinceMs, now = Date.now()) {
       if (ts < sinceSec) continue;             // before we picked it — not ours
       if (peak == null || high > peak) peak = high;
     }
-    return peak;
-  } catch {
-    return null; // ungraded peak is honest; never break the table over it
+    return { peak, reason: peak == null ? 'no candles since the pick' : null };
+  } catch (err) {
+    // Ungraded is honest; never break the table over it.
+    return { peak: null, reason: err?.message === 'HTTP 429' ? 'rate limited' : (err?.message || 'unavailable') };
   }
 }
 

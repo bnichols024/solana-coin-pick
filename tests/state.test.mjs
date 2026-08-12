@@ -285,3 +285,53 @@ test('calibration still reports a genuinely healthy model as healthy', () => {
   ];
   assert.match(calibration(rows).verdict, /holding up/);
 });
+
+// --- peak persistence ------------------------------------------------------
+// Peaks only ever rise, so they are stored. Without this the app re-fetches
+// every peak on every page load, re-hits the same rate limit, and shows an
+// almost empty column forever.
+
+const { updatePeaks } = await import('../src/history.js');
+
+test('updatePeaks stores a peak and keeps the higher of the two', () => {
+  clearHistory();
+  recordPick({ ...coin(), pairAddress: 'POOL1' }, 80, 'buy_now', T0);
+  updatePeaks(new Map([[coin().address, 0.005]]));
+  assert.equal(loadHistory()[0].peakPrice, 0.005);
+
+  updatePeaks(new Map([[coin().address, 0.002]]));
+  assert.equal(loadHistory()[0].peakPrice, 0.005, 'a lower reading must not overwrite the high');
+
+  updatePeaks(new Map([[coin().address, 0.009]]));
+  assert.equal(loadHistory()[0].peakPrice, 0.009, 'a higher reading wins');
+});
+
+test('a persisted peak is used when no fresh one is fetched', () => {
+  const history = [{ address: 'a', symbol: 'A', pickedAt: T0, pickedMc: 100, pickedPrice: 0.001, peakPrice: 0.004 }];
+  const { rows } = gradeHistory(history, new Map([['a', { fdv: 20 }]]), T0, new Map());
+  assert.equal(rows[0].peakMultiple, 4, 'survives a page reload with no network');
+});
+
+test('recordPick stores the pool address so delisted coins stay resolvable', () => {
+  clearHistory();
+  recordPick({ ...coin(), pairAddress: 'POOLXYZ' }, 80, 'buy_now', T0);
+  assert.equal(loadHistory()[0].pairAddress, 'POOLXYZ');
+});
+
+test('updatePeaks backfills a pool address without clobbering a known one', () => {
+  clearHistory();
+  recordPick({ ...coin(), pairAddress: '' }, 80, 'buy_now', T0);
+  updatePeaks(new Map(), new Map([[coin().address, 'DISCOVERED']]));
+  assert.equal(loadHistory()[0].pairAddress, 'DISCOVERED');
+
+  updatePeaks(new Map(), new Map([[coin().address, 'OTHER']]));
+  assert.equal(loadHistory()[0].pairAddress, 'DISCOVERED', 'an existing pool address is kept');
+});
+
+test('updatePeaks with nothing to record touches nothing', () => {
+  clearHistory();
+  recordPick({ ...coin(), pairAddress: 'P' }, 80, 'buy_now', T0);
+  const before = JSON.stringify(loadHistory());
+  updatePeaks(new Map(), new Map());
+  assert.equal(JSON.stringify(loadHistory()), before);
+});

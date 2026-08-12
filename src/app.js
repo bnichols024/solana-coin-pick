@@ -2,7 +2,7 @@
 
 import { CONFIG, SCORE_LABELS, resolvePreset } from './config.js';
 import { discoverCandidates, hydratePairs, fetchJupiterVerified, fetchCurrentMarketCaps, fetchPeakSince } from './sources.js';
-import { loadHistory, recordPick, gradeHistory, clearHistory, calibration } from './history.js';
+import { loadHistory, recordPick, gradeHistory, clearHistory, calibration, updatePeaks } from './history.js';
 import { normalizePair, rankCandidates } from './score.js';
 import { vetToken } from './safety.js';
 import { vetShortlist } from './select.js';
@@ -408,6 +408,12 @@ function renderRunnersUp(list, vetted = new Map()) {
 // the displayed winner re-checks itself. One token, one request per interval.
 
 const LIVE_REFRESH_MS = 45_000;
+
+// GeckoTerminal's free OHLCV allows roughly 30 calls a minute, so peaks are
+// filled in a few per visit rather than all at once.
+const PEAKS_PER_VISIT = 8;
+const PEAK_DELAY_MS = 900;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let liveTimer = null;
 
 function stopLiveRefresh() {
@@ -512,24 +518,39 @@ async function renderHistory({ refresh = true } = {}) {
   if (!stored.length) { historyEl.hidden = true; return; }
 
   let current = new Map();
-  let peaks = new Map();
+  const peaks = new Map();
+  const peakGaps = new Map();
   if (refresh) {
     try {
       current = await fetchCurrentMarketCaps(stored.map((p) => p.address));
     } catch {
       current = new Map(); // ungraded is fine; never break the page over this
     }
-    // Peak needs one OHLCV call per pick, so cap it at the newest handful and
-    // run them in series to stay inside GeckoTerminal's rate limit.
-    for (const pick of stored.slice(0, 15)) {
-      const pool = current.get(pick.address)?.pairAddress;
-      if (!pool) continue;
-      const peak = await fetchPeakSince(pool, pick.pickedAt);
+    // One OHLCV call per pick, spaced out: sequential is not the same as
+    // throttled, and firing ten back to back is what got us rate limited.
+    // Anything already known is skipped, so repeat visits fill in the gaps
+    // rather than re-requesting what we have.
+    const pools = new Map();
+    // Shuffled: a fixed order means the same few picks are retried every visit
+    // while the rest never get a turn, so coverage stalls instead of filling in.
+    const needed = stored.filter((p) => !(p.peakPrice > 0))
+      .map((p) => ({ p, r: Math.random() }))
+      .sort((a, b) => a.r - b.r)
+      .map(({ p }) => p);
+    for (const [i, pick] of needed.slice(0, PEAKS_PER_VISIT).entries()) {
+      const pool = pick.pairAddress || current.get(pick.address)?.pairAddress;
+      if (pool) pools.set(pick.address, pool);
+      if (!pool) { peakGaps.set(pick.address, 'no pool address on record'); continue; }
+      if (i > 0) await sleep(PEAK_DELAY_MS);
+      const { peak, reason } = await fetchPeakSince(pool, pick.pickedAt);
       if (peak > 0) peaks.set(pick.address, peak);
+      else peakGaps.set(pick.address, reason || 'unavailable');
     }
+    // Persist what we learned so it survives the next reload.
+    try { updatePeaks(peaks, pools); } catch { /* storage full — display only */ }
   }
 
-  const { rows, stats } = gradeHistory(stored, current, Date.now(), peaks);
+  const { rows, stats } = gradeHistory(loadHistory(), current, Date.now(), peaks);
 
   $('history-stats').innerHTML = [
     ['Picks', stats.total],
@@ -556,6 +577,20 @@ async function renderHistory({ refresh = true } = {}) {
         : '<span class="muted">—</span>'}</td>
       <td>${resultText(r)}</td>
     </tr>`).join('');
+
+  // A blank Peak column should say why it is blank.
+  const gapNote = $('peak-note');
+  const missing = rows.filter((r) => r.peakMultiple == null).length;
+  if (missing) {
+    const reasons = [...new Set([...peakGaps.values()])].slice(0, 3).join(', ');
+    const pending = missing - peakGaps.size;
+    gapNote.textContent = `Peak unknown for ${missing} pick${missing === 1 ? '' : 's'}`
+      + (reasons ? ` — ${reasons}` : '')
+      + (pending > 0 ? `. ${pending} still queued; reopen the page to fill more in.` : '.');
+    gapNote.hidden = false;
+  } else {
+    gapNote.hidden = true;
+  }
 
   historyEl.hidden = false;
 }

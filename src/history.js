@@ -62,10 +62,33 @@ export function recordPick(candidate, score, entryState, now = Date.now()) {
     pickedAt: now,
     pickedMc: candidate.fdv,
     pickedPrice: candidate.priceUsd,
+    // Stored so the peak lookup still works once DexScreener stops returning
+    // the token — which is exactly what happens to the ones that rugged.
+    pairAddress: candidate.pairAddress || '',
     score,
     entryState,
   });
   saveHistory(list);
+  return list;
+}
+
+/**
+ * Merge newly observed peak prices into storage. Peaks only ever rise, so this
+ * takes the max — which means the data accumulates across visits instead of
+ * being re-fetched (and re-rate-limited) every time the page opens.
+ * @param {Map<string, number>} peaks address -> peak price
+ */
+export function updatePeaks(peaks, alsoPools = new Map()) {
+  if (!peaks.size && !alsoPools.size) return loadHistory();
+  const list = loadHistory();
+  let changed = false;
+  for (const entry of list) {
+    const seen = peaks.get(entry.address);
+    if (seen > 0 && !(entry.peakPrice >= seen)) { entry.peakPrice = seen; changed = true; }
+    const pool = alsoPools.get(entry.address);
+    if (pool && !entry.pairAddress) { entry.pairAddress = pool; changed = true; }
+  }
+  if (changed) saveHistory(list);
   return list;
 }
 
@@ -84,7 +107,8 @@ export function gradeHistory(history, current, now = Date.now(), peaks = new Map
 
     // Peak is carried as a price (from OHLCV) and converted with the price we
     // recorded at pick time, so it stays comparable to the market-cap columns.
-    const peakPrice = peaks.get(p.address);
+    // Prefer a freshly fetched peak, fall back to whatever we learned before.
+    const peakPrice = Math.max(peaks.get(p.address) || 0, p.peakPrice || 0) || null;
     const peakMultiple = peakPrice > 0 && p.pickedPrice > 0
       ? Math.max(peakPrice / p.pickedPrice, multiple ?? 0)
       : null;

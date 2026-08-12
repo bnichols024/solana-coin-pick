@@ -316,6 +316,7 @@ td a:hover { color: var(--gold); }
 .hstat-k { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .hstat-v { font-size: 16px; font-weight: 700; }
 .muted { color: var(--muted); }
+.peak-note { color: var(--gold); opacity: .85; }
 
 /* Visible keyboard focus everywhere, not just where the browser guesses. */
 :focus-visible {
