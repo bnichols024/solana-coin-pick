@@ -1,6 +1,6 @@
 // Orchestration + rendering. Fetch -> normalize -> filter -> score -> show.
 
-import { CONFIG, SCORE_LABELS } from './config.js';
+import { CONFIG, SCORE_LABELS, resolvePreset } from './config.js';
 import { discoverCandidates, hydratePairs, fetchJupiterVerified, fetchCurrentMarketCaps } from './sources.js';
 import { loadHistory, recordPick, gradeHistory, clearHistory } from './history.js';
 import { normalizePair, rankCandidates } from './score.js';
@@ -47,6 +47,29 @@ function safeUrl(raw, fallback = '') {
     return fallback;
   }
 }
+
+// --- risk preset -----------------------------------------------------------
+
+const PRESET_KEY = 'scp:preset';
+let activePreset = resolvePreset(
+  (() => { try { return globalThis.localStorage?.getItem(PRESET_KEY); } catch { return null; } })(),
+);
+
+function applyPreset(name) {
+  activePreset = resolvePreset(name);
+  for (const el of document.querySelectorAll('.preset')) {
+    const on = el.dataset.preset === activePreset.name;
+    el.classList.toggle('is-active', on);
+    el.setAttribute('aria-checked', String(on));
+  }
+  $('preset-blurb').textContent = activePreset.blurb;
+  try { globalThis.localStorage?.setItem(PRESET_KEY, activePreset.name); } catch { /* fine */ }
+}
+
+for (const el of document.querySelectorAll('.preset')) {
+  el.addEventListener('click', () => applyPreset(el.dataset.preset));
+}
+applyPreset(activePreset.name);
 
 btn.addEventListener('click', run);
 
@@ -102,8 +125,8 @@ async function run() {
       }, now);
     });
 
-    log('Filtering out rugs, dead pools and blow-off tops…');
-    const { winner, runnersUp, scored, rejected } = rankCandidates(candidates);
+    log(`Filtering on the ${activePreset.label} profile — rugs, dead pools, blow-off tops…`);
+    const { winner, scored, rejected } = rankCandidates(candidates, activePreset);
     log(`${rejected.length} rejected · ${scored.length} tradeable.`, 'ok');
 
     if (!winner) {
@@ -155,7 +178,7 @@ async function run() {
   } finally {
     btn.removeAttribute('aria-busy');
     btn.disabled = false;
-    btn.querySelector('.cta-label').textContent = 'Generate Another Winner';
+    btn.querySelector('.cta-label').textContent = 'Scan Again';
   }
 }
 

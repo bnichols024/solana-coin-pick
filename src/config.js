@@ -58,6 +58,55 @@ export const CONFIG = {
   },
 };
 
+/**
+ * Risk presets. Same engine, different appetite — these override the defaults
+ * above rather than replacing them, so a preset only states what it changes.
+ */
+export const PRESETS = {
+  safe: {
+    label: 'Cautious',
+    blurb: 'Deeper liquidity, more established pairs. Fewer 100x shots, far fewer zeros.',
+    filters: {
+      minLiquidityUsd: 60_000,
+      maxFdvUsd: 15_000_000,
+      minVolume24hUsd: 200_000,
+      minTxns24h: 600,
+      minPairAgeMinutes: 180,
+    },
+    weights: { momentum: 0.20, buyPressure: 0.22, velocity: 0.15, attention: 0.15, headroom: 0.10, freshness: 0.18 },
+  },
+  balanced: {
+    label: 'Balanced',
+    blurb: 'The default. Small caps with real flow and a live bid.',
+    filters: {},
+    weights: {},
+  },
+  degen: {
+    label: 'Degen',
+    blurb: 'Micro caps and fresh launches. Highest ceiling, highest chance of zero.',
+    filters: {
+      minLiquidityUsd: 15_000,
+      maxFdvUsd: 4_000_000,
+      minVolume24hUsd: 40_000,
+      minTxns24h: 200,
+      minPairAgeMinutes: 60,
+    },
+    weights: { momentum: 0.30, buyPressure: 0.18, velocity: 0.17, attention: 0.10, headroom: 0.20, freshness: 0.05 },
+  },
+};
+
+/** Resolve a preset name into concrete filters and weights. */
+export function resolvePreset(name) {
+  const preset = PRESETS[name] || PRESETS.balanced;
+  return {
+    name: PRESETS[name] ? name : 'balanced',
+    label: preset.label,
+    blurb: preset.blurb,
+    filters: { ...CONFIG.filters, ...preset.filters },
+    weights: Object.keys(preset.weights).length ? preset.weights : CONFIG.weights,
+  };
+}
+
 export const SCORE_LABELS = {
   momentum: 'Momentum acceleration',
   buyPressure: 'Buy pressure',

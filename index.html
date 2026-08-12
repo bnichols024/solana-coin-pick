@@ -15,6 +15,13 @@
     <p class="sub">Scans every free Solana market feed — boosted tokens, new pools, trending pools — ranks them on 24-hour moonshot odds, then checks the winner's actual contract for live mint authority, freeze authority, unlocked liquidity and honeypot patterns.</p>
   </header>
 
+  <div class="presets" role="radiogroup" aria-label="Risk appetite">
+    <button class="preset" type="button" role="radio" data-preset="safe" aria-checked="false">Cautious</button>
+    <button class="preset is-active" type="button" role="radio" data-preset="balanced" aria-checked="true">Balanced</button>
+    <button class="preset" type="button" role="radio" data-preset="degen" aria-checked="false">Degen</button>
+  </div>
+  <p id="preset-blurb" class="preset-blurb"></p>
+
   <button id="generate" class="cta" type="button">
     <span class="cta-label">Generate Winning Meme Coin</span>
   </button>

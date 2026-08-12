@@ -115,6 +115,19 @@ If the whole field fails the filters, it says so instead of inventing a pick. If
 is down, it says which one and scores on the rest — and a source that responds but
 returns zero tokens is reported too, so a changed API shape cannot hide behind a tick.
 
+## Risk presets
+
+Three profiles above the button, remembered between visits:
+
+| Preset | What changes |
+| --- | --- |
+| **Cautious** | $60K+ liquidity, cap ceiling $15M, 600+ trades, 3h+ old; weights favour buy pressure and staying power |
+| **Balanced** | The shipped defaults |
+| **Degen** | $15K+ liquidity, cap ceiling $4M, 200+ trades, 1h+ old; weights favour momentum and headroom |
+
+The contract rug checks are identical in all three — appetite changes which coins are
+considered, never whether they are vetted.
+
 ## Track record
 
 Every pick is stored in your browser with the market cap at the time, and re-graded
@@ -130,7 +143,7 @@ look good — if the picks are bad, the table says so. There is a Clear button.
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # 79 tests
+npm test           # 86 tests
 ```
 
 **Docker / Unraid**
@@ -156,7 +169,7 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ## Testing
 
-79 tests, run on every push before deploy:
+86 tests, run on every push before deploy:
 
 ```bash
 npm test
@@ -181,7 +194,7 @@ scoring weights. Want more aggressive picks? Drop `maxFdvUsd` to `5_000_000` and
 the `momentum` weight. Want safer ones? Raise `minLiquidityUsd`.
 
 `npm test` covers the filters, each scoring signal, ranking, the contract-safety verdicts,
-entry timing and the malformed-data path (30 tests), so you can retune with a safety net.
+entry timing and the malformed-data path, so you can retune with a safety net.
 
 `CONFIG.safety` controls the vetting: `maxVetted` (how many to contract-check per click),
 `vetConcurrency`, and `unverifiedPenalty`.
@@ -216,6 +229,6 @@ src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            79 tests: unit, property/fuzz, packaging and sanitiser
+tests/            86 tests: unit, property/fuzz, packaging and sanitiser
 Dockerfile        nginx:alpine static image
 ```

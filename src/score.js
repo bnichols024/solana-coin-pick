@@ -185,17 +185,18 @@ export function attentionScore(c) {
   return clamp01(0.5 * boost + profile + socials + verified + multiSource);
 }
 
-export function headroomScore(c) {
-  // Smaller FDV = more room. $50K is maximum headroom, $30M is none.
-  return clamp01(1 - logScale(c.fdv, 50_000, CONFIG.filters.maxFdvUsd));
+export function headroomScore(c, filters = CONFIG.filters) {
+  // Smaller FDV = more room. $50K is maximum headroom, the cap ceiling is none.
+  // Tracks the active filter ceiling so a preset that lowers it re-scales too.
+  return clamp01(1 - logScale(c.fdv, 50_000, filters.maxFdvUsd));
 }
 
-export function freshnessScore(c) {
+export function freshnessScore(c, filters = CONFIG.filters) {
   if (c.ageMs == null) return 0;
   const h = c.ageMs / 3_600_000;
-  if (h < 2) return scale(h, 0.75, 2);        // ramping into the sweet spot
-  if (h <= 72) return 1;                       // the sweet spot
-  return clamp01(1 - scale(h, 72, 21 * 24));   // decaying out of it
+  if (h < 2) return scale(h, 0.75, 2);                        // ramping in
+  if (h <= 72) return 1;                                      // sweet spot
+  return clamp01(1 - scale(h, 72, filters.maxPairAgeDays * 24)); // decaying out
 }
 
 const SIGNALS = {
@@ -218,11 +219,11 @@ export function penalties(c) {
 }
 
 /** Full score for one candidate: 0..100 plus the per-signal breakdown. */
-export function scoreCandidate(c, weights = CONFIG.weights) {
+export function scoreCandidate(c, weights = CONFIG.weights, filters = CONFIG.filters) {
   const parts = {};
   let total = 0;
   for (const [key, fn] of Object.entries(SIGNALS)) {
-    const raw = clamp01(fn(c));
+    const raw = clamp01(fn(c, filters));
     const weight = weights[key] ?? 0;
     parts[key] = { raw, weight, weighted: raw * weight };
     total += raw * weight;
@@ -249,17 +250,19 @@ export function upsideBand(c, score) {
  * Rank a list of normalized candidates.
  * @returns {{winner: object|null, runnersUp: object[], scored: object[], rejected: object[]}}
  */
-export function rankCandidates(candidates) {
+export function rankCandidates(candidates, tuning = {}) {
+  const filters = tuning.filters || CONFIG.filters;
+  const weights = tuning.weights || CONFIG.weights;
   const scored = [];
   const rejected = [];
 
   for (const c of candidates) {
-    const reasons = rejectReasons(c);
+    const reasons = rejectReasons(c, filters);
     if (reasons.length) {
       rejected.push({ candidate: c, reasons });
       continue;
     }
-    const result = scoreCandidate(c);
+    const result = scoreCandidate(c, weights, filters);
     scored.push({ candidate: c, ...result, upside: upsideBand(c, result.score) });
   }
 
