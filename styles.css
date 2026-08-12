@@ -174,8 +174,16 @@ h3.section { font-size: 13px; letter-spacing: .16em; text-transform: uppercase; 
 
 .bars { display: grid; gap: 8px; }
 .bar-row { display: grid; grid-template-columns: 1fr 2fr auto; gap: 10px; align-items: center; font-size: 13px; }
-.bar-track { height: 8px; background: #0c101a; border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }
-.bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--gold)); }
+/* Both are spans, so they must be blockified — width and height do not apply
+   to inline elements and the bars would render at zero. */
+.bar-track {
+  display: block; height: 8px; background: #0c101a;
+  border-radius: 99px; overflow: hidden; border: 1px solid var(--line);
+}
+.bar-fill {
+  display: block; height: 100%; min-width: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--gold));
+}
 .bar-val { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 
 .risks { list-style: none; padding: 0; margin: 10px 0 0; }

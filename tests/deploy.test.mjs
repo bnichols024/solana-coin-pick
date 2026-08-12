@@ -85,3 +85,42 @@ test('no stray API keys or secrets are committed', () => {
     assert.equal(value, '', `${field} must ship empty, found a value`);
   }
 });
+
+test('sized spans are blockified, or they render at zero width', () => {
+  const css = read('styles.css');
+  // Width and height do not apply to inline elements. Any span-based bar or
+  // dot that sets a size must also set a display, or it silently vanishes —
+  // exactly the bug that hid the score bars.
+  const sizedSelectors = ['.bar-fill', '.bar-track'];
+  for (const sel of sizedSelectors) {
+    const block = new RegExp(`\\${sel}\\s*\\{[^}]*\\}`, 's');
+    const match = css.match(block);
+    assert.ok(match, `${sel} rule not found in styles.css`);
+    assert.match(match[0], /display:\s*(block|flex|inline-block|grid)/,
+      `${sel} sets a size but no display — it will render at zero`);
+  }
+});
+
+test('the CSP allows exactly the hosts the code calls, and no more', () => {
+  const csp = html.match(/Content-Security-Policy"\s+content="([^"]+)"/s);
+  assert.ok(csp, 'index.html must carry a Content-Security-Policy meta tag');
+  const connectSrc = csp[1].match(/connect-src([^;]+);/s)[1];
+
+  // Every https host referenced by the source must be permitted, or the
+  // browser blocks the request at runtime with no server-side warning.
+  const sourceHosts = new Set();
+  for (const file of srcFiles) {
+    for (const m of read(`src/${file}`).matchAll(/https:\/\/([a-z0-9.-]+)/gi)) {
+      const host = m[1].toLowerCase();
+      // Links the user clicks are navigations, not fetches — not connect-src.
+      if (/dexscreener\.com$|birdeye\.so$|jup\.ag$/.test(host) && !host.startsWith('api.') && !host.startsWith('lite-api.')) continue;
+      if (host === 'rugcheck.xyz' || host === 'example.invalid') continue;
+      sourceHosts.add(host);
+    }
+  }
+  for (const host of sourceHosts) {
+    assert.ok(connectSrc.includes(host), `CSP connect-src is missing ${host}`);
+  }
+  assert.ok(!/connect-src[^;]*\*/.test(csp[1]), 'connect-src must not use a wildcard');
+  assert.match(csp[1], /default-src\s+'none'/, 'default-src should deny by default');
+});

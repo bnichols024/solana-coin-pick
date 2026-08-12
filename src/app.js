@@ -253,7 +253,7 @@ function renderWinner(entry, safety, { live = false } = {}) {
   const bars = Object.entries(entry.parts).map(([key, p]) => `
     <div class="bar-row">
       <span>${esc(SCORE_LABELS[key] || key)}</span>
-      <span class="bar-track"><span class="bar-fill" style="width:${(p.raw * 100).toFixed(0)}%"></span></span>
+      <span class="bar-track"><span class="bar-fill" data-fill="${(p.raw * 100).toFixed(0)}"></span></span>
       <span class="bar-val">${(p.raw * 100).toFixed(0)}</span>
     </div>`).join('');
 
@@ -323,6 +323,12 @@ function renderWinner(entry, safety, { live = false } = {}) {
         <a href="https://rugcheck.xyz/tokens/${encodeURIComponent(c.address)}" target="_blank" rel="noopener noreferrer">RugCheck</a>
       </div>
     </div>`;
+
+  // Inline style attributes are blocked by the page's CSP, so the bars are
+  // filled through the CSSOM instead, which is allowed.
+  for (const bar of resultEl.querySelectorAll('.bar-fill')) {
+    bar.style.width = `${bar.dataset.fill}%`;
+  }
 
   $('copy').addEventListener('click', async (e) => {
     try {

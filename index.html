@@ -3,6 +3,27 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!--
+  Locked down to the exact hosts the app talks to. A meta CSP applies on both
+  GitHub Pages and the nginx container, so the two deployments cannot drift.
+  Token icons come from arbitrary CDNs, hence the broad https: for images only.
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self';
+  style-src 'self';
+  img-src 'self' data: https:;
+  connect-src 'self'
+    https://api.dexscreener.com
+    https://api.geckoterminal.com
+    https://api.rugcheck.xyz
+    https://lite-api.jup.ag
+    https://api.mainnet-beta.solana.com
+    https://solana-rpc.publicnode.com
+    https://solana.drpc.org;
+  base-uri 'none';
+  form-action 'none';
+" />
 <title>Winning Meme Coin Generator</title>
 <meta name="description" content="One button. Scans every free Solana market feed and picks the coin with the best odds of a 5x–100x day." />
 <link rel="stylesheet" href="./styles.css" />

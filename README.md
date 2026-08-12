@@ -137,13 +137,20 @@ look good — if the picks are bad, the table says so. There is a Clear button.
 
 ---
 
+## Security
+
+The page renders strings from third-party APIs, so: everything is HTML-escaped, anything
+reaching an `href` or `src` must be an absolute `https` URL, and a `Content-Security-Policy`
+meta tag denies by default and allows `connect-src` only to the seven hosts the app
+actually calls. A test asserts the policy stays in sync with the code.
+
 ## Run it
 
 **Locally**
 
 ```bash
 npm start          # python3 -m http.server 8080
-npm test           # 86 tests
+npm test           # 115 tests
 ```
 
 **Docker / Unraid**
@@ -169,7 +176,7 @@ add port `8080` → `80`. No paths, no variables, no secrets to configure.
 
 ## Testing
 
-86 tests, run on every push before deploy:
+115 tests, run on every push before deploy:
 
 ```bash
 npm test
@@ -180,6 +187,10 @@ random and deliberately hostile candidates at the model and assert invariants �
 finite and in range, entry levels correctly ordered, never advising entry above the
 current cap, no NaN reaching a formatter. That fuzzing found three real crash paths on
 its first run, all reachable from live API data.
+
+The network layer is tested against a stubbed `fetch`: batching, deepest-pool
+selection, retry-and-recover versus permanent failure, the RPC fallback chain, and
+Token-2022 extension parsing.
 
 There are also **packaging guards**: every module must be imported, referenced by
 `index.html`, copied by the `Dockerfile` and staged by the Pages workflow, with no bare
@@ -229,6 +240,6 @@ src/history.js    pick storage and grading
 src/score.js      pure scoring engine
 src/format.js     display helpers
 src/app.js        orchestration + rendering
-tests/            86 tests: unit, property/fuzz, packaging and sanitiser
+tests/            115 tests: unit, network, property/fuzz, packaging, sanitiser
 Dockerfile        nginx:alpine static image
 ```
