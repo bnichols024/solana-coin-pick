@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { PRESETS, resolvePreset, CONFIG } from '../src/config.js';
-import { normalizePair, rankCandidates, scale, logScale } from '../src/score.js';
+import { normalizePair, rankCandidates, scale, logScale, headroomScore, freshnessScore } from '../src/score.js';
 import * as fx from './fixtures.js';
 
 const norm = (pair) => normalizePair(pair, {}, fx.NOW);
@@ -70,10 +70,11 @@ test('presets change the ranking, not just the filtering', () => {
 });
 
 test('headroom rescales with the preset cap ceiling', () => {
-  const coin = norm({ ...fx.goodRunner, fdv: 2_000_000, marketCap: 2_000_000 });
+  const coin = norm({ ...fx.goodRunner, fdv: 1_000_000, marketCap: 1_000_000 });
   const degen = rankCandidates([coin], resolvePreset('degen')).scored[0];
   const balanced = rankCandidates([coin], resolvePreset('balanced')).scored[0];
-  // $2M is near degen's $4M ceiling but tiny against balanced's $30M one.
+  assert.ok(degen && balanced, 'both presets should accept a $1M coin');
+  // $1M is close to degen's $1.5M ceiling but well under balanced's $3M one.
   assert.ok(degen.parts.headroom.raw < balanced.parts.headroom.raw);
 });
 
@@ -151,10 +152,15 @@ test('inside a one-hour window, younger scores higher on freshness', () => {
 
 test('the one-hour window does not disturb the wider presets', () => {
   const balanced = resolvePreset('balanced');
-  const fresh = rankCandidates([norm({ ...fx.goodRunner, pairCreatedAt: fx.NOW - 12 * 3600e3 })], balanced).scored[0];
-  const older = rankCandidates([norm({ ...fx.goodRunner, pairCreatedAt: fx.NOW - 50 * 3600e3 })], balanced).scored[0];
+  const at = (h) => rankCandidates([norm({ ...fx.goodRunner, pairCreatedAt: fx.NOW - h * 3600e3 })], balanced).scored[0];
+  const fresh = at(12);
+  const older = at(50);
+  assert.ok(fresh && older, 'both are inside balanced\'s three-day window');
+  // The sweet spot scales to the window rather than to gamble's hour: on a
+  // three-day window it runs to 36h, so 12h is still perfect and 50h decays.
   assert.equal(fresh.parts.freshness.raw, 1);
-  assert.equal(older.parts.freshness.raw, 1, 'a 21-day window still treats both as fresh');
+  assert.ok(older.parts.freshness.raw < 1, 'past the sweet spot it decays, not steps');
+  assert.ok(older.parts.freshness.raw > 0, 'but a two-day-old coin is not scored zero');
 });
 
 test('gamble rejects anything over an hour old', () => {
@@ -179,4 +185,74 @@ test('scale and logScale survive a degenerate range instead of going constant', 
   // step rather than a NaN that silently clamps the whole signal to zero.
   assert.equal(scale(5, 10, 5), 1);
   assert.ok(Number.isFinite(scale(5, 10, 5)));
+});
+
+// --- v4: no preset may flatten a scale-dependent signal --------------------
+// CLAUDE.md records this failing twice: a preset with a much narrower range
+// silently turns headroom or freshness into a constant, and the model then
+// ranks on the remaining signals with no warning. scale()/logScale() step
+// instead of dividing by zero, which converts the bug from NaN to constant —
+// so it has to be checked numerically, per preset, not reasoned about.
+
+test('every preset keeps headroom and freshness discriminating across its own range', () => {
+  for (const name of Object.keys(PRESETS)) {
+    const { filters } = resolvePreset(name);
+    const maxHours = filters.maxPairAgeDays * 24;
+
+    const headrooms = [0.02, 0.2, 0.5, 0.95].map((f) =>
+      headroomScore({ fdv: filters.maxFdvUsd * f }, filters));
+    assert.ok(headrooms[0] - headrooms[3] > 0.4,
+      `${name}: headroom is nearly flat across its cap range (${headrooms.join(', ')})`);
+    for (let i = 1; i < headrooms.length; i++) {
+      assert.ok(headrooms[i] <= headrooms[i - 1], `${name}: headroom must fall as cap rises`);
+    }
+
+    // Sample across the ages this preset actually admits: below
+    // minPairAgeMinutes the coin is rejected outright, so scoring it zero there
+    // is correct and would mask a genuinely flat curve.
+    const minHours = filters.minPairAgeMinutes / 60;
+    const fresh = [0, 0.3, 0.75, 1].map((f) =>
+      freshnessScore({ ageMs: (minHours + (maxHours - minHours) * f) * 3_600_000 }, filters));
+    assert.ok(Math.max(...fresh) - Math.min(...fresh) > 0.4,
+      `${name}: freshness is nearly flat across its age window (${fresh.join(', ')})`);
+    // The curve ramps in, plateaus, then decays, so the youngest legal coin is
+    // not necessarily the highest. What must never happen — and did, in the
+    // Gamble tier — is the *oldest* allowed coin scoring best.
+    assert.ok(fresh[3] < Math.max(...fresh),
+      `${name}: the oldest allowed coin scores highest on freshness (${fresh.join(', ')})`);
+  }
+});
+
+test('v4 rejects the shape of pick the track record is full of', () => {
+  // The screenshot that prompted v4: caps in the hundreds of thousands to
+  // millions, picked after a large daily move, peaking 1.05x and then bleeding
+  // 80–99%. Under v3's tuning every one of these was scoreable.
+  const v3 = {
+    filters: {
+      ...resolvePreset('balanced').filters,
+      maxFdvUsd: 30_000_000,
+      maxPairAgeDays: 21,
+      latenessGraceHours: undefined,
+      maxChange24h: undefined,
+      maxChange6h: undefined,
+    },
+    weights: resolvePreset('balanced').weights,
+  };
+  const v4 = resolvePreset('balanced');
+
+  const lateBigCap = norm({
+    ...fx.goodRunner,
+    fdv: 2_820_000,
+    marketCap: 2_820_000,
+    pairCreatedAt: fx.NOW - 30 * 3600e3,
+    priceChange: { m5: 1, h1: 6, h6: 55, h24: 240 },
+  });
+
+  assert.equal(rankCandidates([lateBigCap], v3).scored.length, 1, 'v3 happily scored it');
+  const after = rankCandidates([lateBigCap], v4);
+  assert.equal(after.scored.length, 0, 'v4 must not score it at all');
+  assert.ok(after.rejected[0].reasons.some((r) => /entry has passed/.test(r)));
+
+  // ...without closing the field: a small, early, still-moving coin survives.
+  assert.equal(rankCandidates([norm(fx.goodRunner)], v4).scored.length, 1);
 });

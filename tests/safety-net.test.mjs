@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 globalThis.localStorage = undefined; // exercise the in-memory cache path
 
-const { fetchMintAuthorities, fetchRugcheckSummary, vetToken, sellSideBlocked } =
+const { fetchMintAuthorities, fetchRugcheckSummary, vetToken, sellSideBlocked, rpcEndpoints } =
   await import('../src/safety.js');
 const { cacheClear } = await import('../src/cache.js');
 
@@ -27,6 +27,38 @@ function stubFetch(handler) {
 
 const mintAccount = (info, owner = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') =>
   ok({ jsonrpc: '2.0', id: 1, result: { value: { owner, data: { parsed: { info } } } } });
+
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const rpcMethod = (opts) => { try { return JSON.parse(opts?.body || '{}').method; } catch { return null; } };
+
+/**
+ * Answer the four calls fetchHolderConcentration makes: one wallet holding
+ * `sharePct` of supply, plus a pool vault that must be excluded.
+ */
+const holderCalls = (sharePct) => (opts) => {
+  const supply = 1_000_000;
+  switch (rpcMethod(opts)) {
+    case 'getTokenSupply':
+      return ok({ result: { value: { uiAmountString: String(supply) } } });
+    case 'getTokenLargestAccounts':
+      return ok({ result: { value: [
+        { address: 'VAULT', uiAmountString: String(supply * 0.6) },   // the AMM pool
+        { address: 'TA1', uiAmountString: String(supply * sharePct / 100) },
+      ] } });
+    case 'getMultipleAccounts':
+      return JSON.parse(opts.body).params[1].encoding === 'jsonParsed'
+        ? ok({ result: { value: [
+          { data: { parsed: { info: { owner: 'POOLAUTH' } } } },
+          { data: { parsed: { info: { owner: 'WALLET1' } } } },
+        ] } })
+        : ok({ result: { value: [
+          { owner: 'RaydiumProgram', executable: false },  // PDA — not a holder
+          { owner: SYSTEM_PROGRAM, executable: false },    // a real wallet
+        ] } });
+    default:
+      return null;
+  }
+};
 
 test.beforeEach(() => cacheClear());
 test.afterEach(() => { globalThis.fetch = realFetch; });
@@ -56,7 +88,25 @@ test('falls through to the next RPC when the first is down', async () => {
 test('throws only after every RPC endpoint has failed', async () => {
   const calls = stubFetch(async () => null);
   await assert.rejects(() => fetchMintAuthorities('mint1'));
-  assert.equal(calls.length, 3, 'all three endpoints are attempted');
+  assert.equal(calls.length, rpcEndpoints().length, 'every endpoint is attempted');
+});
+
+test('Helius leads the RPC chain but never replaces the public fallbacks', async () => {
+  const chain = rpcEndpoints();
+  assert.match(chain[0], /helius-rpc\.com/, 'the private endpoint is tried first');
+  assert.equal(chain.length, 4, 'the three public RPCs remain behind it');
+
+  // A dead Helius must degrade to the old behaviour, not blind the checks.
+  let attempt = 0;
+  const calls = stubFetch(async () => {
+    attempt++;
+    if (attempt === 1) return null;
+    return mintAccount({ mintAuthority: null, freezeAuthority: null });
+  });
+  const info = await fetchMintAuthorities('mint1');
+  assert.match(calls[0], /helius-rpc\.com/);
+  assert.doesNotMatch(calls[1], /helius-rpc\.com/, 'it falls through to a public RPC');
+  assert.equal(info.mintAuthority, null);
 });
 
 test('a JSON-RPC error payload is a failure, not a null authority', async () => {
@@ -112,35 +162,58 @@ test('RugCheck risks are normalised and the score is read from either field', as
   assert.deepEqual(r2.risks, [], 'a null risks field is an empty list, not a crash');
 });
 
-test('vetToken merges both providers into one verdict', async () => {
-  stubFetch(async (url) => {
-    if (url.includes('rugcheck')) return ok({ score: 5, risks: [] });
-    return mintAccount({ mintAuthority: null, freezeAuthority: null });
-  });
+/** Everything healthy: clean mint, clean RugCheck, well-spread supply. */
+const allClear = (sharePct = 5) => async (url, opts) => {
+  if (url.includes('rugcheck')) return ok({ score: 5, risks: [] });
+  if (url.includes('helius')) return holderCalls(sharePct)(opts);
+  return mintAccount({ mintAuthority: null, freezeAuthority: null });
+};
+
+test('vetToken merges every provider into one verdict', async () => {
+  stubFetch(allClear());
   const v = await vetToken('good-mint');
   assert.equal(v.verdict, 'pass');
-  assert.equal(v.checked.length, 2);
+  assert.equal(v.checked.length, 3);
   assert.equal(v.unverified.length, 0);
 });
 
-test('one provider down leaves the other counted and the gap reported', async () => {
-  stubFetch(async (url) => {
+test('one provider down leaves the others counted and the gap reported', async () => {
+  stubFetch(async (url, opts) => {
     if (url.includes('rugcheck')) return null;
-    return mintAccount({ mintAuthority: null, freezeAuthority: null });
+    return allClear()(url, opts);
   });
   const v = await vetToken('half-mint');
   assert.equal(v.verdict, 'pass');
-  assert.deepEqual(v.checked, ['Mint & freeze authority']);
+  assert.ok(v.checked.includes('Mint & freeze authority'));
+  assert.ok(v.checked.some((c) => /^Top-10 holder concentration \(5% of supply\)$/.test(c)),
+    'the label carries the actual share, not just "passed"');
   assert.equal(v.unverified.length, 1);
   assert.match(v.unverified[0], /RugCheck/);
 });
 
-test('both providers down never yields a clean bill of health', async () => {
+test('every provider down never yields a clean bill of health', async () => {
   stubFetch(async () => null);
   const v = await vetToken('dark-mint');
   assert.equal(v.checked.length, 0);
-  assert.equal(v.unverified.length, 2);
+  assert.equal(v.unverified.length, 3);
+  assert.ok(v.unverified.some((u) => /Top-10 holder concentration/.test(u)));
   assert.equal(v.rejections.length, 0, 'unknown is not the same as dangerous');
+});
+
+test('concentrated supply rejects the coin outright', async () => {
+  stubFetch(allClear(62));
+  const v = await vetToken('whale-mint');
+  assert.equal(v.verdict, 'reject');
+  assert.ok(v.rejections.some((r) => /Top 10 wallets hold 62%/.test(r)));
+});
+
+test('the AMM pool vault is not counted as a holder', async () => {
+  // VAULT holds 60% of supply and is owned by a program, not a wallet. Counting
+  // it would reject every healthy coin on the board.
+  stubFetch(allClear(5));
+  const v = await vetToken('pooled-mint');
+  assert.equal(v.verdict, 'pass');
+  assert.equal(v.warnings.length, 0, '5% held by real wallets is not a warning');
 });
 
 test('a live mint authority rejects even when RugCheck is happy', async () => {

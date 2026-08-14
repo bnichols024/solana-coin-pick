@@ -82,6 +82,9 @@ export function normalizePair(pair, extra = {}, now = Date.now()) {
     boostAmount: num(extra.boostAmount) ?? num(pair?.boosts?.active) ?? 0,
     hasProfile: !!extra.hasProfile,
     jupiterVerified: !!extra.jupiterVerified,
+    // Null means "we did not manage to look", which is not the same as zero and
+    // must never read as a pass — the filter is skipped rather than cleared.
+    top10SharePct: num(extra.top10SharePct),
     socials: pair?.info?.socials?.length || 0,
     sources: extra.sources || [],
   };
@@ -134,6 +137,31 @@ export function rejectReasons(c, f = CONFIG.filters) {
   if (c.avgTradeUsd < f.minAvgTradeUsd) out.push('micro-trade spam (likely wash volume)');
   if (c.avgTradeUsd > f.maxAvgTradeUsd) out.push('a few whales, not a crowd');
   if (c.chg24h > f.blowOffChange24h && c.chg1h < f.blowOffChange1h) out.push('blow-off top — already ran and rolling over');
+
+  // Lateness, as a rejection rather than a discount.
+  //
+  // The blow-off rule above needs a coin to be up 400% *and* red on the hour,
+  // which almost never co-occurs, so through v3 a coin up 250% on the day
+  // cleared every filter and only lost a fraction of one weighted signal. The
+  // track record is what those picks look like: peak 1.05x, then −90%.
+  //
+  // Age matters, exactly as it does in momentumScore: for a coin 30 minutes old
+  // that percentage is its entire life and there was no earlier entry to have
+  // missed. An unknown age counts as mature so it cannot become a loophole.
+  const ageHours = c.ageMs == null ? 24 : c.ageMs / 3_600_000;
+  if (ageHours >= f.latenessGraceHours) {
+    if (c.chg24h > f.maxChange24h) {
+      out.push(`already up ${Math.round(c.chg24h)}% today — the entry has passed`);
+    } else if (c.chg6h > f.maxChange6h) {
+      out.push(`up ${Math.round(c.chg6h)}% in six hours — the move already happened`);
+    }
+  }
+
+  // Supply concentration. Null = the check could not run, which skips the rule
+  // rather than passing it; the coin is still scored, just without this fact.
+  if (c.top10SharePct != null && c.top10SharePct > f.maxTop10SharePct) {
+    out.push(`top 10 wallets hold ${Math.round(c.top10SharePct)}% of supply`);
+  }
 
   // Honeypot tells, straight from the trade counts — no extra API needed.
   if (c.buys24h >= f.honeypotMinBuys && c.sells24h === 0) {

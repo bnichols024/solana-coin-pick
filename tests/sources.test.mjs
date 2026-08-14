@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 globalThis.localStorage = undefined;
 
-const { discoverCandidates, hydratePairs, fetchCurrentMarketCaps, fetchJupiterVerified } =
+const { discoverCandidates, hydratePairs, fetchCurrentMarketCaps, fetchJupiterVerified, fetchHolderConcentration } =
   await import('../src/sources.js');
 
 const realFetch = globalThis.fetch;
@@ -190,4 +190,84 @@ test('an HTTP error status is treated as a failure, not as data', async () => {
   assert.equal(out.size, 0);
   const { seeds } = await discoverCandidates();
   assert.equal(seeds.size, 0);
+});
+
+// --- Helius holder concentration -------------------------------------------
+// The one fact free market data cannot give us: how much of the supply sits in
+// a handful of wallets that can end the coin in a single transaction.
+
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const rpcMethod = (opts) => { try { return JSON.parse(opts?.body || '{}').method; } catch { return null; } };
+
+/**
+ * @param holders [uiAmount, isWallet][] — the largest token accounts and
+ *                whether each is controlled by a plain wallet or a program.
+ */
+const heliusStub = (supply, holders) => async (url, opts) => {
+  if (!url.includes('helius')) return null;
+  switch (rpcMethod(opts)) {
+    case 'getTokenSupply':
+      return ok({ result: { value: { uiAmountString: String(supply) } } });
+    case 'getTokenLargestAccounts':
+      return ok({ result: { value: holders.map(([amount], i) =>
+        ({ address: `TA${i}`, uiAmountString: String(amount) })) } });
+    case 'getMultipleAccounts':
+      return JSON.parse(opts.body).params[1].encoding === 'jsonParsed'
+        ? ok({ result: { value: holders.map((_, i) => ({ data: { parsed: { info: { owner: `OWNER${i}` } } } })) } })
+        : ok({ result: { value: holders.map(([, isWallet]) =>
+          ({ owner: isWallet ? SYSTEM_PROGRAM : 'SomeAmmProgram', executable: false })) } });
+    default:
+      return null;
+  }
+};
+
+test('holder concentration is the share held by real wallets, pool excluded', async () => {
+  stubFetch(heliusStub(1000, [[600, false], [200, true], [50, true]]));
+  const r = await fetchHolderConcentration('mint1');
+  // 600 sits in the AMM vault and is not a holding; 250 of 1000 is.
+  assert.equal(Math.round(r.top10SharePct), 25);
+  assert.equal(r.countedHolders, 2);
+  assert.equal(r.excluded, 1, 'the program-owned account is excluded');
+});
+
+test('only the ten largest wallets count toward the share', async () => {
+  const twelve = Array.from({ length: 12 }, () => [10, true]);
+  stubFetch(heliusStub(1000, twelve));
+  const r = await fetchHolderConcentration('mint1');
+  assert.equal(Math.round(r.top10SharePct), 10, '10 x 10 of 1000, not 12 x 10');
+});
+
+test('an owner account that does not exist on chain is never a holder', async () => {
+  // A PDA that has never been funded returns null from getMultipleAccounts.
+  stubFetch(async (url, opts) => {
+    if (rpcMethod(opts) === 'getMultipleAccounts'
+      && JSON.parse(opts.body).params[1].encoding === 'base64') {
+      return ok({ result: { value: [null] } });
+    }
+    return heliusStub(1000, [[900, true]])(url, opts);
+  });
+  const r = await fetchHolderConcentration('mint1');
+  assert.equal(r, null, 'with nothing countable there is no answer to give');
+});
+
+test('a Helius failure returns null rather than throwing', async () => {
+  stubFetch(async () => null);
+  assert.equal(await fetchHolderConcentration('mint1'), null);
+
+  stubFetch(async () => ({ ok: false, status: 429, json: async () => ({}) }));
+  assert.equal(await fetchHolderConcentration('mint1'), null);
+
+  stubFetch(async () => ok({ error: { message: 'rate limited' } }));
+  assert.equal(await fetchHolderConcentration('mint1'), null);
+});
+
+test('a zero or missing supply is unknown, not a zero share', async () => {
+  stubFetch(heliusStub(0, [[10, true]]));
+  assert.equal(await fetchHolderConcentration('mint1'), null);
+});
+
+test('no address means no request at all', async () => {
+  const calls = stubFetch(async () => ok({}));
+  assert.equal(await fetchHolderConcentration(''), null);
+  assert.equal(calls.length, 0);
 });

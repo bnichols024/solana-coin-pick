@@ -1,7 +1,7 @@
 // Free, keyless data sources. Every source is independently fail-soft: if one
 // is down or rate-limited we record it and score on whatever else came back.
 
-import { CONFIG } from './config.js';
+import { CONFIG, heliusRpcUrl } from './config.js';
 
 const DEX = 'https://api.dexscreener.com';
 const GECKO = 'https://api.geckoterminal.com/api/v2';
@@ -291,11 +291,103 @@ export async function fetchJupiterVerified() {
 // can merge the result unconditionally. Wire the bodies up when a key exists.
 // ---------------------------------------------------------------------------
 
-export async function fetchHolderConcentration(_address) {
-  if (!CONFIG.paid.heliusApiKey) return null;
-  // Helius `getTokenLargestAccounts` -> top-10 share of supply. A top-10 share
-  // above ~30% is a rug waiting to happen and should become a hard filter.
-  return null;
+/** Accounts owned by this program are ordinary wallets; anything else is a PDA. */
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+
+async function heliusRpc(method, params, timeoutMs = 9000) {
+  const url = heliusRpcUrl();
+  if (!url) throw new Error('no Helius key');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error.message || 'rpc error');
+    return json.result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const amountOf = (v) => {
+  const n = Number(v?.uiAmountString ?? v?.uiAmount);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/**
+ * What share of supply the ten largest *wallets* hold.
+ *
+ * The subtlety is that the single largest token account is almost always the
+ * AMM's own liquidity vault, which is not a holder in any meaningful sense —
+ * counting it would reject every healthy coin on the board. Rather than
+ * maintaining a list of AMM program addresses that goes stale, this asks the
+ * chain a general question: a real holder's wallet is owned by the System
+ * Program, while a pool vault, bonding curve or staking account is owned by
+ * (or is) a program. Anything not plainly a wallet is excluded.
+ *
+ * Never throws. Returns null when the answer could not be obtained, which the
+ * caller must treat as "unknown" and never as "fine" — an absent check is not
+ * a pass.
+ *
+ * @returns {Promise<{top10SharePct: number, countedHolders: number, excluded: number}|null>}
+ */
+export async function fetchHolderConcentration(address) {
+  if (!CONFIG.paid.heliusApiKey || !address) return null;
+  try {
+    const [supplyRes, largest] = await Promise.all([
+      heliusRpc('getTokenSupply', [address]),
+      heliusRpc('getTokenLargestAccounts', [address]),
+    ]);
+
+    const supply = amountOf(supplyRes?.value);
+    const accounts = (largest?.value || []).filter((a) => a?.address);
+    if (!(supply > 0) || !accounts.length) return null;
+
+    // token account -> the address that controls it
+    const parsed = await heliusRpc('getMultipleAccounts',
+      [accounts.map((a) => a.address), { encoding: 'jsonParsed' }]);
+    const owners = (parsed?.value || []).map((v) => v?.data?.parsed?.info?.owner || null);
+    if (owners.length !== accounts.length) return null;
+
+    // ...and whether each of those is a plain wallet or a program-controlled account.
+    const unique = [...new Set(owners.filter(Boolean))];
+    const ownerInfo = unique.length
+      ? await heliusRpc('getMultipleAccounts', [unique, { encoding: 'base64' }])
+      : { value: [] };
+    const isWallet = new Map();
+    unique.forEach((owner, i) => {
+      const acct = ownerInfo?.value?.[i];
+      // A missing account is a PDA that has never been funded — never a holder.
+      isWallet.set(owner, !!acct && acct.owner === SYSTEM_PROGRAM && !acct.executable);
+    });
+
+    const held = [];
+    let excluded = 0;
+    accounts.forEach((a, i) => {
+      const owner = owners[i];
+      if (!owner || !isWallet.get(owner)) { excluded += 1; return; }
+      held.push(amountOf(a));
+    });
+    if (!held.length) return null;
+
+    held.sort((x, y) => y - x);
+    const top10 = held.slice(0, 10).reduce((s, n) => s + n, 0);
+    return {
+      top10SharePct: (top10 / supply) * 100,
+      countedHolders: held.length,
+      excluded,
+    };
+  } catch {
+    // Fail soft and silent: this is an enrichment, and a rate-limited Helius
+    // must not take a scan down.
+    return null;
+  }
 }
 
 export async function fetchRugcheckScore(_address) {

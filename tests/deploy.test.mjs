@@ -81,7 +81,17 @@ test('no stray API keys or secrets are committed', () => {
   const config = read('src/config.js');
   const keyFields = [...config.matchAll(/(\w*(?:ApiKey|Token|Secret)\w*)\s*:\s*'([^']*)'/g)];
   assert.ok(keyFields.length > 0, 'expected the optional paid-key placeholders to exist');
+
+  // One exception, made deliberately and by name. This is a keyless static
+  // site: there is no server to hold a secret, so a key that must work on
+  // GitHub Pages has to be in the bundle. `heliusApiKey` is a free-tier key
+  // whose worst case is someone spending the rate limit. Every other field
+  // still has to ship empty, so this stays a real guard against an accidental
+  // paste rather than a hole that swallows the next one.
+  const DELIBERATELY_PUBLIC = new Set(['heliusApiKey']);
+
   for (const [, field, value] of keyFields) {
+    if (DELIBERATELY_PUBLIC.has(field)) continue;
     assert.equal(value, '', `${field} must ship empty, found a value`);
   }
 });

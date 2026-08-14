@@ -123,13 +123,26 @@ test('missing or garbage data degrades to zero, never NaN', () => {
 
 const cleanMint = { mintAuthority: null, freezeAuthority: null, transferFeeBps: null, program: 'spl-token' };
 const cleanRug = { score: 5, risks: [] };
+const cleanHolders = { top10SharePct: 8, countedHolders: 10, excluded: 1 };
 
-test('a clean contract passes with both checks recorded', () => {
-  const r = evaluateSafety({ mint: cleanMint, rugcheck: cleanRug });
+test('a clean contract passes with every check recorded', () => {
+  const r = evaluateSafety({ mint: cleanMint, rugcheck: cleanRug, holders: cleanHolders });
   assert.equal(r.verdict, 'pass');
   assert.equal(r.rejections.length, 0);
   assert.equal(r.unverified.length, 0);
-  assert.equal(r.checked.length, 2);
+  assert.equal(r.checked.length, 3);
+});
+
+test('holder concentration rejects above the threshold and warns approaching it', () => {
+  const share = (top10SharePct) =>
+    evaluateSafety({ mint: cleanMint, rugcheck: cleanRug, holders: { top10SharePct } }, 30);
+
+  assert.equal(share(45).verdict, 'reject');
+  assert.match(share(45).rejections[0], /one transaction/);
+  assert.equal(share(24).verdict, 'pass');
+  assert.equal(share(24).warnings.length, 1, 'approaching the line is worth saying');
+  assert.equal(share(8).verdict, 'pass');
+  assert.equal(share(8).warnings.length, 0);
 });
 
 test('live mint or freeze authority is an outright rejection', () => {
@@ -169,17 +182,27 @@ test('RugCheck danger rejects, warn only warns', () => {
 });
 
 test('a check that could not run is reported, never silently passed', () => {
-  const r = evaluateSafety({ mint: null, mintError: 'HTTP 429', rugcheck: cleanRug });
+  const r = evaluateSafety({ mint: null, mintError: 'HTTP 429', rugcheck: cleanRug, holders: cleanHolders });
   assert.equal(r.verdict, 'pass');           // not proof of danger...
   assert.equal(r.unverified.length, 1);      // ...but never invisible
   assert.match(r.unverified[0], /HTTP 429/);
-  assert.equal(r.checked.length, 1);
+  assert.equal(r.checked.length, 2);
 });
 
-test('total safety outage yields two unverified entries, no false all-clear', () => {
-  const r = evaluateSafety({ mint: null, mintError: 'offline', rugcheck: null, rugcheckError: 'offline' });
+test('an unreadable holder count is unverified, not a clean spread', () => {
+  const r = evaluateSafety({ mint: cleanMint, rugcheck: cleanRug, holders: null, holdersError: 'no usable answer' });
+  assert.equal(r.verdict, 'pass');
+  assert.equal(r.rejections.length, 0);
+  assert.equal(r.unverified.length, 1);
+  assert.match(r.unverified[0], /Top-10 holder concentration \(no usable answer\)/);
+});
+
+test('total safety outage yields an unverified entry per check, no false all-clear', () => {
+  const r = evaluateSafety({
+    mint: null, mintError: 'offline', rugcheck: null, rugcheckError: 'offline', holders: null, holdersError: 'offline',
+  });
   assert.equal(r.checked.length, 0);
-  assert.equal(r.unverified.length, 2);
+  assert.equal(r.unverified.length, 3);
   assert.equal(r.rejections.length, 0);
 });
 
@@ -376,10 +399,66 @@ test('a whole-model comparison: the early coin now beats the pumping one', () =>
   // Same liquidity, volume and trade profile; only the price action differs.
   const pumping = norm({ ...fx.goodRunner, priceChange: { m5: 12, h1: 70, h6: 120, h24: 260 } });
   const starting = norm({ ...fx.goodRunner, priceChange: { m5: 1.5, h1: 11, h6: 10, h24: 18 } });
-  const { scored } = rankCandidates([pumping, starting], resolvePreset('balanced'));
-  assert.equal(scored.length, 2, 'both should clear the filters');
+  const { scored, rejected } = rankCandidates([pumping, starting], resolvePreset('balanced'));
+
+  // v2 merely ranked the early coin above the pumping one. v4 goes further:
+  // at ten hours old and up 260% on the day, the pumping coin is past the
+  // grace window and is thrown out of the field entirely.
+  assert.equal(scored.length, 1, 'the finished move should not be scored at all');
   assert.equal(scored[0].candidate.symbol, starting.symbol);
-  assert.ok(scored[0].score > scored[1].score);
+  assert.ok(rejected.some((r) => r.candidate.symbol === pumping.symbol
+    && r.reasons.some((x) => /entry has passed/.test(x))));
+});
+
+test('a mature coin that has already run is rejected, not merely discounted', () => {
+  const late = (chg) => norm({ ...fx.goodRunner, priceChange: chg });
+  const f = resolvePreset('balanced');
+
+  // Up 200% on the day at ten hours old: the entry passed hours ago.
+  assert.ok(rankCandidates([late({ m5: 2, h1: 8, h6: 40, h24: 200 })], f)
+    .rejected[0].reasons.some((r) => /entry has passed/.test(r)));
+
+  // Up 140% but 130% of it in the last six hours: same story, shorter window.
+  assert.ok(rankCandidates([late({ m5: 2, h1: 8, h6: 130, h24: 140 })], f)
+    .rejected[0].reasons.some((r) => /move already happened/.test(r)));
+
+  // The v3 fixture itself still clears both ceilings, so this did not just
+  // close the field.
+  assert.equal(rankCandidates([norm(fx.goodRunner)], f).scored.length, 1);
+});
+
+test('inside the grace window the same numbers are not late', () => {
+  const chg = { m5: 6, h1: 40, h6: 200, h24: 200 };
+  const at = (ageHours) => rankCandidates(
+    [norm({ ...fx.goodRunner, pairCreatedAt: fx.NOW - ageHours * 3_600_000, priceChange: chg })],
+    resolvePreset('balanced'),
+  );
+  // Two hours old: that 200% is the coin's entire life, there was no earlier
+  // entry to have missed.
+  assert.equal(at(2).scored.length, 1, 'a young launch is not late for its own move');
+  assert.equal(at(9).scored.length, 0, 'the same numbers on a nine-hour-old coin are');
+});
+
+test('an unknown pair age counts as mature, so it cannot be a loophole', () => {
+  // Age is already a hard reject on its own; this pins the lateness rule's own
+  // default, matching momentumScore, so a missing timestamp never buys a pass.
+  const noAge = norm({ ...fx.goodRunner, pairCreatedAt: undefined, priceChange: { m5: 2, h1: 8, h6: 40, h24: 200 } });
+  const reasons = rejectReasons(noAge, resolvePreset('balanced').filters);
+  assert.ok(reasons.some((r) => /entry has passed/.test(r)));
+});
+
+test('supply concentration rejects, and an absent reading never passes a coin', () => {
+  const f = resolvePreset('balanced').filters;
+  const withShare = (top10SharePct) => normalizePair(fx.goodRunner, { top10SharePct }, fx.NOW);
+
+  assert.ok(rejectReasons(withShare(45), f).some((r) => /top 10 wallets hold 45%/.test(r)));
+  assert.equal(rejectReasons(withShare(12), f).length, 0, 'a well-spread coin is fine');
+
+  // The check could not run. That must skip the rule, not clear it — and it
+  // must not be confused with a reading of zero.
+  const unknown = withShare(undefined);
+  assert.equal(unknown.top10SharePct, null);
+  assert.equal(rejectReasons(unknown, f).length, 0);
 });
 
 // --- v3: "late" depends on how much history a coin has ---------------------

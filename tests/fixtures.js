@@ -42,7 +42,10 @@ export const mediocre = {
     h24: { buys: 2600, sells: 2500 },
   },
   liquidity: { usd: 400_000 },
-  fdv: 12_000_000,
+  // Larger than goodRunner's $900K, so it has visibly less headroom, but still
+  // inside v4's $3M ceiling — this fixture is meant to be a weak *candidate*,
+  // not a rejected one, and at $12M it stopped being scored at all.
+  fdv: 2_400_000,
 };
 
 export const thinLiquidity = {

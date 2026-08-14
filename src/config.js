@@ -6,7 +6,7 @@ export const CONFIG = {
   // Bumped whenever the scoring model changes in a way that should be judged
   // separately. Every pick is stamped with it, so a new model's results are
   // never averaged in with the old one's. Rows with no stamp are v1.
-  modelVersion: 3,
+  modelVersion: 4,
 
   // --- hard filters -------------------------------------------------------
   filters: {
@@ -14,9 +14,12 @@ export const CONFIG = {
     maxLiquidityUsd: 2_000_000,   // above this a 10x in a day is not happening
     minVolume24hUsd: 50_000,      // no real flow = no move
     minVolumeToLiquidity: 1.0,    // 24h volume must at least turn the pool once
-    maxFdvUsd: 30_000_000,        // 100x from here would be a top-20 coin
+    // v4: was $30M. Every v1–v3 pick above ~$500K peaked between 1.04x and
+    // 1.08x — they never moved at all. A cap this size cannot produce the
+    // outcome this app exists to find, so it is no longer allowed to be picked.
+    maxFdvUsd: 3_000_000,
     minPairAgeMinutes: 45,        // sniper/rug window
-    maxPairAgeDays: 21,           // past this it is no longer a fresh runner
+    maxPairAgeDays: 3,            // v4: was 21. Three weeks is not a fresh runner.
     minTxns24h: 300,
     minAvgTradeUsd: 5,            // filters obvious wash/bot micro-txn spam
     maxAvgTradeUsd: 25_000,       // a handful of whales, not a real crowd
@@ -26,6 +29,24 @@ export const CONFIG = {
     honeypotBuySellRatio: 15,     // buys/sells this lopsided is a sell tax or trap
     corpseChange24h: -60,         // down this hard = the rug already happened
     corpseLiquidityUsd: 60_000,
+
+    // --- v4: lateness as a hard filter, not a weight ---------------------
+    // v2 and v3 only *discounted* a finished move inside momentumScore, so a
+    // coin up 250% on the day still cleared every filter and lost a fraction
+    // of one weighted signal. It then peaked 1.05x and bled 90%. These are
+    // outright rejections.
+    //
+    // The grace window is the same idea momentumScore already uses: for a coin
+    // 30 minutes old, that percentage *is its whole life* and there was no
+    // earlier entry to have missed. Past the window it means the entry passed.
+    latenessGraceHours: 6,
+    maxChange24h: 150,            // % — already up this much today = too late
+    maxChange6h: 100,             // % — the move happened in the last six hours
+
+    // Top-10 non-pool wallets holding more than this share of supply is a
+    // handful of people who can end the coin in one transaction. Requires a
+    // Helius key; when the check cannot run the filter is skipped, never passed.
+    maxTop10SharePct: 30,
   },
 
   // --- contract vetting (src/safety.js) -----------------------------------
@@ -60,11 +81,25 @@ export const CONFIG = {
   // --- v2 / paid providers (all optional, empty = disabled) ---------------
   paid: {
     birdeyeApiKey: '',   // richer OHLCV + holder counts
-    heliusApiKey: '',    // top-10 holder concentration, mint/freeze authority
+    // Free-tier key, deliberately committed: this is a keyless static site and
+    // there is nowhere else to put it. It ships in the repo and in browser
+    // network traffic, so anyone can spend the quota — the blast radius is rate
+    // limits, not funds. Rotating it is a one-line change.
+    heliusApiKey: 'ccf61431-4de9-4302-ba9b-fc417b77e9f7',
     rugcheckApiKey: '',  // contract risk report
     xBearerToken: '',    // social mention velocity
   },
 };
+
+/**
+ * Helius RPC endpoint, or null when no key is set. Defined once here so
+ * sources.js and safety.js cannot drift on the host — the CSP lists exactly one
+ * and a second spelling would be blocked at runtime with no server-side warning.
+ */
+export function heliusRpcUrl() {
+  const key = CONFIG.paid.heliusApiKey;
+  return key ? `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(key)}` : null;
+}
 
 /** Pair-age filters are expressed in days; this keeps short windows readable. */
 const minutes = (m) => m / 1440;
@@ -79,10 +114,13 @@ export const PRESETS = {
     blurb: 'Deeper liquidity, more established pairs. Fewer 100x shots, far fewer zeros.',
     filters: {
       minLiquidityUsd: 60_000,
-      maxFdvUsd: 15_000_000,
+      maxFdvUsd: 8_000_000,
       minVolume24hUsd: 200_000,
       minTxns24h: 600,
       minPairAgeMinutes: 180,
+      maxPairAgeDays: 7,
+      // The most conservative tier is also the least willing to chase.
+      maxChange24h: 100,
     },
     weights: { momentum: 0.20, buyPressure: 0.27, velocity: 0.10, attention: 0.05, headroom: 0.18, freshness: 0.20 },
   },
@@ -97,10 +135,16 @@ export const PRESETS = {
     blurb: 'Micro caps and fresh launches. High ceiling, high chance of zero.',
     filters: {
       minLiquidityUsd: 15_000,
-      maxFdvUsd: 4_000_000,
+      maxFdvUsd: 1_500_000,
       minVolume24hUsd: 40_000,
       minTxns24h: 200,
       minPairAgeMinutes: 60,
+      // At one day this crosses the `maxPairAgeDays <= 1` test in app.js that
+      // puts gecko-new seeds first in the hydration queue. That is intended:
+      // Degen is now a fresh-launch tier and needs the leading feed.
+      maxPairAgeDays: 1,
+      maxChange24h: 250,
+      maxChange6h: 150,
     },
     weights: { momentum: 0.28, buyPressure: 0.22, velocity: 0.10, attention: 0.03, headroom: 0.27, freshness: 0.10 },
   },
@@ -125,6 +169,12 @@ export const PRESETS = {
       minAvgTradeUsd: 1,
       maxAvgTradeUsd: 3_000,     // at this size a $3K trade is one whale
       corpseLiquidityUsd: 25_000,
+      // Nothing in this tier is older than an hour, so it is always inside the
+      // six-hour grace window and these ceilings never actually fire. They are
+      // stated anyway so the tier does not silently inherit a stricter number
+      // if the age window is ever widened.
+      maxChange24h: 400,
+      maxChange6h: 400,
     },
     // Attention barely exists down here — nobody buys promotion for a $30K
     // coin — so that weight moves to momentum, headroom and freshness.

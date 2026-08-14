@@ -13,7 +13,8 @@ dead pools, and ranks what is left on its odds of a 5x–100x move in the next 2
 
 ## How it works
 
-No backend, no API keys, no database. Everything runs in your browser, so the same
+No backend, no database, and one free-tier API key (Helius) committed in plain sight
+because there is no server to hide it in. Everything runs in your browser, so the same
 files serve from GitHub Pages and from a container on your Unraid box.
 
 **1 — Discover** (in parallel, each source fail-soft):
@@ -34,10 +35,14 @@ keeps its deepest pool.
 
 - liquidity under $20K (you cannot exit) or over $2M (too heavy to 10x in a day)
 - 24h volume under $50K, or a pool that has not turned over once
-- FDV over $30M — a 100x from there would be a top-20 coin
-- pair younger than 45 minutes (sniper/rug window) or older than 21 days
+- FDV over $3M — above that the ceiling is gone before you start (see **v4** below)
+- pair younger than 45 minutes (sniper/rug window) or older than 3 days
 - fewer than 300 trades, or an average trade size that reads as wash volume or whales
 - already up 400%+ on the day **and** red on the hour (blow-off top)
+- **up more than 150% on the day, or 100% in six hours, once the coin is past six
+  hours old** — the entry has already gone. Inside those first six hours the rule is
+  suspended, because for a coin that young the move *is* its whole life
+- top 10 wallets holding more than 30% of supply (checked at the vetting stage)
 
 Plus honeypot tells that need no extra API: a token with buyers and **zero sellers**, a
 wildly lopsided buy/sell ratio (sell tax), or a pool already down 60%+ on thin liquidity
@@ -53,6 +58,34 @@ wildly lopsided buy/sell ratio (sell tax), or a pool already down 60%+ on thin l
 | Corroboration | 3% | Profile, socials, multiple feeds. **Not** boost spend |
 | Upside headroom | 22% | Log-inverse FDV — small cap, room to run |
 | Freshness | 15% | Sweet spot runs to 72h, or halfway through a preset's shorter age window |
+
+### Model v4 — lateness is a rejection, not a discount
+
+Three model versions in, the track record still said the same thing: 20 picks, peaks of
+1.04, 1.06, 1.07, 1.08, 1.23, 1.26, 1.39, 1.52, 1.53, 1.72 and 2.11, then −73% to −99%,
+with several tokens gone entirely. Two patterns explain most of it.
+
+**Size capped the ceiling.** Every pick above roughly $500K market cap peaked between
+1.04x and 1.08x — they never moved at all. The only ones that reached 1.5x were $146K,
+$207K and $561K. The cap ceiling was $30M. v4 drops it to $3M on Balanced and $1.5M on
+Degen, and shortens the age window from three weeks to three days.
+
+**We were still buying finished moves.** v2 and v3 made lateness a *weight* — a coin up
+250% on the day cleared every filter and lost a fraction of one signal. The only hard
+rule needed a coin to be up 400% **and** red on the hour, which almost never co-occurs.
+In v4 an already-run coin is thrown out of the field, age-aware exactly as v3's momentum
+is: past six hours old, up more than 150% on the day or 100% in six hours means the
+entry has gone.
+
+**New fact:** top-10 holder concentration, from Helius, at the vetting stage. This is the
+one thing free market data cannot see, and it is the most likely explanation for the rows
+that went to −95% and then to no data at all.
+
+Measured against a synthetic board of 20,000 candidates, v4 keeps about 12% of what
+Balanced would have scored under v3 — a much smaller field, not an empty one — and halves
+the median market cap of what survives. As with v2, this is a hypothesis fitted to a
+small number of data points. It is stamped `modelVersion: 4` so the track record judges
+it on its own picks and reverting is a config change.
 
 ### Model v3 — "late" depends on age
 
@@ -98,8 +131,8 @@ outnumbering buyers.
 
 **5 — Vet the contract** (`src/safety.js`). Market data cannot see a rug coming, so the
 top-ranked coins get their actual mint account and contract report checked before one is
-handed to you. Free and keyless: public Solana RPC (three endpoints, first to answer
-wins) plus RugCheck's public summary.
+handed to you. Helius first (a private RPC, so these checks stop being rate-limited into
+"unverified"), falling back to three public Solana RPCs, plus RugCheck's public summary.
 
 | Rejected outright | Why it matters |
 | --- | --- |
@@ -107,6 +140,7 @@ wins) plus RugCheck's public summary.
 | Freeze authority still live | Your tokens can be frozen so you cannot sell |
 | Token-2022 transfer fee > 10% | Skimmed off every trade |
 | RugCheck `danger` risks | Unlocked LP, top-holder concentration, honeypot patterns |
+| Top 10 wallets hold >30% of supply | A handful of people can end the coin in one transaction |
 
 The governing rule: **fail closed on a bad answer, fail loud on no answer.** A check that
 says "dangerous" rejects the coin. A check that cannot run never silently passes it — the
@@ -168,9 +202,9 @@ Four profiles above the button, remembered between visits:
 
 | Preset | What changes |
 | --- | --- |
-| **Cautious** | $60K+ liquidity, cap ceiling $15M, 600+ trades, 3h+ old; weights favour buy pressure and staying power |
+| **Cautious** | $60K+ liquidity, cap ceiling $8M, 600+ trades, 3h+ old, max 7 days; weights favour buy pressure and staying power |
 | **Balanced** | The shipped defaults |
-| **Degen** | $15K+ liquidity, cap ceiling $4M, 200+ trades, 1h+ old; weights favour momentum and headroom |
+| **Degen** | $15K+ liquidity, cap ceiling $1.5M, 200+ trades, 1h+ old, **max 24 hours**; weights favour momentum and headroom |
 | **Gamble** | Cap ceiling **$50K**, $3K+ liquidity, 25+ trades, **15–60 minutes old**. Brand-new lottery tickets — expect most to go to zero |
 
 **Gamble** is an order of magnitude below the others on every floor, because a $50K coin
@@ -294,8 +328,9 @@ https-only allowlist for anything reaching an `href` or `src`.
 ## Tuning it
 
 Everything worth changing lives in `src/config.js` — the filter thresholds and the
-scoring weights. Want more aggressive picks? Drop `maxFdvUsd` to `5_000_000` and raise
-the `momentum` weight. Want safer ones? Raise `minLiquidityUsd`.
+scoring weights. Want more aggressive picks? Drop `maxFdvUsd` and raise the `momentum`
+weight. Want safer ones? Raise `minLiquidityUsd`. Want to see more of the board, at the
+cost of the thing v4 was built to stop? Raise `maxChange24h`.
 
 `npm test` covers the filters, each scoring signal, ranking, the contract-safety verdicts,
 entry timing and the malformed-data path, so you can retune with a safety net.
@@ -307,13 +342,17 @@ Contract results are cached for 15 minutes in `localStorage`, and vetting stops 
 first fully verified coin, which together keep the free public RPCs from rate-limiting
 repeated clicks.
 
-## v2 — paid signals
+## Paid signals
 
 `src/sources.js` has stubbed adapters, each gated on an empty key in `CONFIG.paid`, so
 adding one is a paste and a function body:
 
-- **Helius** — a private RPC, so the mint/authority checks stop being rate-limited by the
-  public endpoints, plus exact top-10 holder concentration.
+- **Helius** — *wired up.* A private RPC for the mint/authority checks, plus top-10
+  holder concentration computed from `getTokenLargestAccounts`. The AMM's own liquidity
+  vault is excluded by asking the chain whether each owner is a plain wallet (owned by
+  the System Program) or a program-controlled account — no hardcoded list of AMM
+  addresses to go stale. The key is committed in `CONFIG.paid.heliusApiKey`; it is
+  free-tier, so the worst case is someone spending the rate limit.
 - **Birdeye** — 1-minute OHLCV for true acceleration, real holder counts.
 - **X / Twitter** — mention velocity, the strongest leading indicator that no free tier
   gives you.

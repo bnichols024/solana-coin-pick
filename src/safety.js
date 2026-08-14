@@ -6,6 +6,8 @@
 // unverified, penalised, and the gap is shown on the card.
 
 import { cached } from './cache.js';
+import { CONFIG, heliusRpcUrl } from './config.js';
+import { fetchHolderConcentration } from './sources.js';
 
 /**
  * Contract facts barely change, so cache them hard. This is what keeps the
@@ -13,11 +15,23 @@ import { cached } from './cache.js';
  */
 const VET_TTL_MS = 15 * 60 * 1000;
 
-const RPC_ENDPOINTS = [
+/**
+ * Helius first when a key is set — it is a private endpoint, so the mint and
+ * freeze checks stop being rate-limited into `unverified`, which costs a coin
+ * `CONFIG.safety.unverifiedPenalty` points through no fault of its own. The
+ * public RPCs stay as fallbacks so a Helius outage or a spent quota degrades
+ * to the old behaviour rather than blinding the safety layer.
+ */
+const PUBLIC_RPCS = [
   'https://api.mainnet-beta.solana.com',
   'https://solana-rpc.publicnode.com',
   'https://solana.drpc.org',
 ];
+
+export function rpcEndpoints() {
+  const helius = heliusRpcUrl();
+  return helius ? [helius, ...PUBLIC_RPCS] : [...PUBLIC_RPCS];
+}
 
 const RUGCHECK = 'https://api.rugcheck.xyz/v1/tokens';
 
@@ -40,7 +54,7 @@ async function withTimeout(promise, ms) {
 /** Try each public RPC in turn; first one that answers wins. */
 async function rpcCall(method, params, timeoutMs = 9000) {
   let lastErr;
-  for (const endpoint of RPC_ENDPOINTS) {
+  for (const endpoint of rpcEndpoints()) {
     try {
       const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
       const res = await withTimeout((signal) => fetch(endpoint, {
@@ -129,7 +143,7 @@ export function sellSideBlocked(c) {
  * @returns {{verdict: 'reject'|'pass', rejections: string[], warnings: string[],
  *            unverified: string[], checked: string[]}}
  */
-export function evaluateSafety(results = {}) {
+export function evaluateSafety(results = {}, maxShare = CONFIG.filters.maxTop10SharePct) {
   const rejections = [];
   const warnings = [];
   const unverified = [];
@@ -160,6 +174,23 @@ export function evaluateSafety(results = {}) {
     unverified.push(`RugCheck contract report (${rugcheckError || 'check unavailable'})`);
   }
 
+  // Supply concentration. The threshold lives in CONFIG.filters so the live
+  // path and the score-time filter in score.js cannot drift apart.
+  const { holders, holdersError } = results;
+  if (holders && holders.top10SharePct != null) {
+    const share = holders.top10SharePct;
+    // Carry the number into the label: "passed" alone tells you nothing about
+    // whether the coin scraped through at 29% or is genuinely well spread.
+    checked.push(`Top-10 holder concentration (${share.toFixed(0)}% of supply)`);
+    if (share > maxShare) {
+      rejections.push(`Top 10 wallets hold ${share.toFixed(0)}% of supply — they can end this coin in one transaction`);
+    } else if (share > maxShare * 0.6) {
+      warnings.push(`Top 10 wallets hold ${share.toFixed(0)}% of supply`);
+    }
+  } else {
+    unverified.push(`Top-10 holder concentration (${holdersError || 'check unavailable'})`);
+  }
+
   return {
     verdict: rejections.length ? 'reject' : 'pass',
     rejections,
@@ -176,15 +207,22 @@ export function evaluateSafety(results = {}) {
 export async function vetToken(address) {
   // Cache each provider separately: a rate-limited RugCheck should not stop us
   // reusing a good mint-authority answer, and vice versa.
-  const [mintRes, rugRes] = await Promise.allSettled([
+  const [mintRes, rugRes, holderRes] = await Promise.allSettled([
     cached(`mint:${address}`, VET_TTL_MS, () => fetchMintAuthorities(address)),
     cached(`rug:${address}`, VET_TTL_MS, () => fetchRugcheckSummary(address)),
+    cached(`holders:${address}`, VET_TTL_MS, () => fetchHolderConcentration(address)),
   ]);
 
+  const holders = holderRes.status === 'fulfilled' ? holderRes.value : null;
   return evaluateSafety({
     mint: mintRes.status === 'fulfilled' ? mintRes.value : null,
     mintError: mintRes.status === 'rejected' ? (mintRes.reason?.message || 'error') : null,
     rugcheck: rugRes.status === 'fulfilled' ? rugRes.value : null,
     rugcheckError: rugRes.status === 'rejected' ? (rugRes.reason?.message || 'error') : null,
+    holders,
+    // fetchHolderConcentration resolves null rather than throwing, so the
+    // distinction we can still report is "no key" versus "no usable answer".
+    holdersError: holders ? null
+      : (holderRes.reason?.message || (heliusRpcUrl() ? 'no usable answer' : 'no Helius key')),
   });
 }
